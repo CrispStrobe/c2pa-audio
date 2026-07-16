@@ -319,7 +319,7 @@ struct ManifestSigner {
         ok = true;
     }
 
-    Bytes build_claim(const Bytes& hashdata_assn_hash) const {
+    Bytes build_claim(const std::string& hard_label, const Bytes& hard_assn_hash) const {
         return cbor::map({
             {"instanceID", cbor::tstr(instance_id)},
             {"claim_generator_info", cbor::map({
@@ -328,8 +328,8 @@ struct ManifestSigner {
                                      })},
             {"signature", cbor::tstr("self#jumbf=/c2pa/" + manifest_urn + "/c2pa.signature")},
             {"created_assertions", cbor::arr({cbor::map({
-                                       {"url", cbor::tstr("self#jumbf=c2pa.assertions/c2pa.hash.data")},
-                                       {"hash", cbor::bstr(hashdata_assn_hash)},
+                                       {"url", cbor::tstr("self#jumbf=c2pa.assertions/" + hard_label)},
+                                       {"hash", cbor::bstr(hard_assn_hash)},
                                    })})},
             {"gathered_assertions", cbor::arr({cbor::map({
                                         {"url", cbor::tstr("self#jumbf=c2pa.assertions/c2pa.actions.v2")},
@@ -350,7 +350,20 @@ struct ManifestSigner {
         return jumb("c2cs", "c2pa.signature", {cbor_box(cose)});
     }
 
-    // Build the JUMBF store binding to a data-hash exclusion [excl_start,excl_len).
+    // Generic: assemble the store around a caller-built hard-binding assertion
+    // box (hash.data for WAV/MP3, hash.bmff.v3 for M4A). Returns {store, hardBox}.
+    Assembled assemble_with(const Bytes& hard_box, const std::string& hard_label,
+                            const Bytes& hard_assn_hash) const {
+        Bytes assertions_box = jumb("c2as", "c2pa.assertions", {actions_box, hard_box});
+        Bytes claim_bytes = build_claim(hard_label, hard_assn_hash);
+        Bytes claim_box = jumb("c2cl", "c2pa.claim.v2", {cbor_box(claim_bytes)});
+        Bytes sig_box = build_cose_box(claim_bytes);
+        Bytes manifest_box = jumb("c2ma", manifest_urn, {assertions_box, claim_box, sig_box});
+        Bytes store = jumb("c2pa", "c2pa", {manifest_box});
+        return {std::move(store), Bytes()};
+    }
+
+    // WAV/MP3: byte-range data-hash exclusion [excl_start, excl_len).
     Assembled assemble(const std::array<uint8_t, 32>& file_hash, uint64_t excl_start, uint64_t excl_len,
                        const Bytes& hashdata_assn_hash) const {
         Bytes hashdata_cbor = cbor::map({
@@ -364,13 +377,35 @@ struct ManifestSigner {
             {"pad", cbor::bstr(Bytes(8, 0))},
         });
         Bytes hash_data_box = jumb("cbor", "c2pa.hash.data", {cbor_box(hashdata_cbor)});
-        Bytes assertions_box = jumb("c2as", "c2pa.assertions", {actions_box, hash_data_box});
-        Bytes claim_bytes = build_claim(hashdata_assn_hash);
-        Bytes claim_box = jumb("c2cl", "c2pa.claim.v2", {cbor_box(claim_bytes)});
-        Bytes sig_box = build_cose_box(claim_bytes);
-        Bytes manifest_box = jumb("c2ma", manifest_urn, {assertions_box, claim_box, sig_box});
-        Bytes store = jumb("c2pa", "c2pa", {manifest_box});
-        return {std::move(store), std::move(hash_data_box)};
+        Assembled a = assemble_with(hash_data_box, "c2pa.hash.data", hashdata_assn_hash);
+        a.hash_data_box = std::move(hash_data_box);
+        return a;
+    }
+
+    // M4A/MP4: BMFF v3 assertion — box-path exclusions + the offset-prepend hash.
+    static Bytes bmff_v3_assertion(const std::array<uint8_t, 32>& bmff_hash) {
+        static const uint8_t C2PA_UUID[16] = {0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c,
+                                              0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81};
+        Bytes uuid_excl = cbor::map({
+            {"xpath", cbor::tstr("/uuid")},
+            {"data", cbor::arr({cbor::map({
+                         {"offset", cbor::uint_(8)},
+                         {"value", cbor::bstr(Bytes(C2PA_UUID, C2PA_UUID + 16))},
+                     })})},
+        });
+        auto simple = [](const char* xp) { return cbor::map({{"xpath", cbor::tstr(xp)}}); };
+        return cbor::map({
+            {"exclusions", cbor::arr({uuid_excl, simple("/ftyp"), simple("/mfra"), simple("/free"), simple("/skip")})},
+            {"alg", cbor::tstr("sha256")},
+            {"hash", cbor::bstr(Bytes(bmff_hash.begin(), bmff_hash.end()))},
+            {"name", cbor::tstr("jumbf manifest")},
+        });
+    }
+    Assembled assemble_bmff(const std::array<uint8_t, 32>& bmff_hash, const Bytes& hard_assn_hash) const {
+        Bytes box = jumb("cbor", "c2pa.hash.bmff.v3", {cbor_box(bmff_v3_assertion(bmff_hash))});
+        Assembled a = assemble_with(box, "c2pa.hash.bmff.v3", hard_assn_hash);
+        a.hash_data_box = std::move(box);
+        return a;
     }
 };
 
@@ -527,6 +562,164 @@ Bytes sign_mp3(const Bytes& mp3, const std::string& cert_pem, const std::string&
     if (a4.store.empty())
         return {};
     return assemble_file(a4.store);
+}
+
+namespace {
+inline uint32_t be32(const uint8_t* p) {
+    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+// Read a big-endian box size; returns {size, header_len}. size==0 means "to EOF".
+inline void bmff_box_size(const Bytes& b, size_t o, uint64_t& size, size_t& hdr) {
+    size = be32(&b[o]);
+    hdr = 8;
+    if (size == 1 && o + 16 <= b.size()) {
+        size = 0;
+        for (int i = 0; i < 8; i++)
+            size = (size << 8) | b[o + 8 + i];
+        hdr = 16;
+    } else if (size == 0) {
+        size = b.size() - o;
+    }
+}
+// Recursively adjust stco (32-bit) / co64 (64-bit) chunk offsets by +delta within
+// [start, end) of buffer `out`. Recurses into container boxes on the moov path.
+void adjust_chunk_offsets(Bytes& out, size_t start, size_t end, uint64_t delta) {
+    size_t o = start;
+    while (o + 8 <= end) {
+        uint64_t bs;
+        size_t hdr;
+        bmff_box_size(out, o, bs, hdr);
+        if (bs < hdr || o + bs > end)
+            break;
+        const char* t = reinterpret_cast<const char*>(&out[o + 4]);
+        if (std::memcmp(t, "stco", 4) == 0 || std::memcmp(t, "co64", 4) == 0) {
+            bool is64 = std::memcmp(t, "co64", 4) == 0;
+            size_t p = o + hdr + 4; // skip version+flags
+            if (p + 4 <= end) {
+                uint32_t count = uint32_t(be32(&out[p]));
+                p += 4;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (is64) {
+                        if (p + 8 > end)
+                            break;
+                        uint64_t v = 0;
+                        for (int k = 0; k < 8; k++)
+                            v = (v << 8) | out[p + k];
+                        v += delta;
+                        for (int k = 0; k < 8; k++)
+                            out[p + k] = uint8_t(v >> (56 - k * 8));
+                        p += 8;
+                    } else {
+                        if (p + 4 > end)
+                            break;
+                        uint32_t v = uint32_t(be32(&out[p])) + uint32_t(delta);
+                        out[p] = uint8_t(v >> 24);
+                        out[p + 1] = uint8_t(v >> 16);
+                        out[p + 2] = uint8_t(v >> 8);
+                        out[p + 3] = uint8_t(v);
+                        p += 4;
+                    }
+                }
+            }
+        } else if (std::memcmp(t, "moov", 4) == 0 || std::memcmp(t, "trak", 4) == 0 ||
+                   std::memcmp(t, "mdia", 4) == 0 || std::memcmp(t, "minf", 4) == 0 ||
+                   std::memcmp(t, "stbl", 4) == 0) {
+            adjust_chunk_offsets(out, o + hdr, o + bs, delta);
+        }
+        o += bs;
+    }
+}
+// SHA-256 over each NON-excluded top-level box: BE64(offset) ++ box bytes.
+// Excludes ftyp, free, mfra, skip, and the C2PA uuid box.
+std::array<uint8_t, 32> bmff_v3_hash(const Bytes& file) {
+    static const uint8_t C2PA_UUID[16] = {0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c,
+                                          0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81};
+    sha::Sha256 h;
+    h.init();
+    size_t o = 0;
+    while (o + 8 <= file.size()) {
+        uint64_t bs;
+        size_t hdr;
+        bmff_box_size(file, o, bs, hdr);
+        if (bs < hdr || o + bs > file.size())
+            break;
+        const char* t = reinterpret_cast<const char*>(&file[o + 4]);
+        bool excl = std::memcmp(t, "ftyp", 4) == 0 || std::memcmp(t, "free", 4) == 0 ||
+                    std::memcmp(t, "mfra", 4) == 0 || std::memcmp(t, "skip", 4) == 0;
+        if (std::memcmp(t, "uuid", 4) == 0 && o + hdr + 16 <= file.size() &&
+            std::memcmp(&file[o + hdr], C2PA_UUID, 16) == 0)
+            excl = true;
+        if (!excl) {
+            uint8_t be[8];
+            for (int i = 0; i < 8; i++)
+                be[i] = uint8_t(o >> (56 - i * 8));
+            h.update(be, 8);
+            h.update(&file[o], bs);
+        }
+        o += bs;
+    }
+    std::array<uint8_t, 32> out{};
+    h.final(out.data());
+    return out;
+}
+} // namespace
+
+// Sign an M4A/MP4 (ISO BMFF) by inserting a C2PA 'uuid' box after 'ftyp' and
+// binding with a c2pa.hash.bmff.v3 assertion (offset-prepend hash). Chunk
+// offsets (stco/co64) are adjusted for the inserted box.
+Bytes sign_m4a(const Bytes& m4a, const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
+    if (m4a.size() < 16 || std::memcmp(&m4a[4], "ftyp", 4) != 0)
+        return {};
+    ManifestSigner ms(cert_pem, key_pem, opts);
+    if (!ms.ok)
+        return {};
+    const std::array<uint8_t, 32> ZERO{};
+
+    uint64_t ftyp_size;
+    size_t ftyp_hdr;
+    bmff_box_size(m4a, 0, ftyp_size, ftyp_hdr);
+    const size_t insert_at = size_t(ftyp_size); // right after ftyp
+
+    static const uint8_t C2PA_UUID[16] = {0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c,
+                                          0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81};
+    // uuid box = [size][ "uuid"][16 uuid][4 reserved=0]["manifest\0"(9)][8 merkle=0][store]
+    auto uuid_box = [&](const Bytes& store) {
+        Bytes b;
+        uint32_t sz = uint32_t(8 + 16 + 4 + 9 + 8 + store.size());
+        u32be(b, sz);
+        put_str(b, "uuid");
+        put(b, C2PA_UUID, 16);
+        put(b, {0, 0, 0, 0}); // reserved
+        put_str(b, "manifest");
+        b.push_back(0);
+        put(b, Bytes(8, 0)); // merkle offset
+        put(b, store);
+        return b;
+    };
+    // Build the final file for a given store: ftyp | uuid(store) | rest, with
+    // chunk offsets shifted by the inserted uuid box size.
+    auto build_file = [&](const Bytes& store) {
+        Bytes ub = uuid_box(store);
+        const uint64_t delta = ub.size();
+        Bytes out(m4a.begin(), m4a.begin() + insert_at);
+        put(out, ub);
+        size_t rest = out.size();
+        out.insert(out.end(), m4a.begin() + insert_at, m4a.end());
+        adjust_chunk_offsets(out, rest, out.size(), delta); // fix stco/co64 in the shifted region
+        return out;
+    };
+
+    // Store size is fixed (all fields fixed-width) -> uuid box size is stable, so
+    // the mdat/moov offsets are determined by a placeholder pass; no iteration.
+    Bytes placeholder = ms.assemble_bmff(ZERO, Bytes(ZERO.begin(), ZERO.end())).store;
+    Bytes skeleton = build_file(placeholder);
+    auto bhash = bmff_v3_hash(skeleton);
+    auto a3 = ms.assemble_bmff(bhash, Bytes(ZERO.begin(), ZERO.end()));
+    Bytes hard_assn_hash = ManifestSigner::assertion_hash(a3.hash_data_box);
+    auto a4 = ms.assemble_bmff(bhash, hard_assn_hash);
+    if (a4.store.empty() || a4.store.size() != placeholder.size())
+        return {};
+    return build_file(a4.store);
 }
 
 // ============================================================================
@@ -770,6 +963,35 @@ VerifyResult verify_wav(const Bytes& wav) {
             }
             o += 10 + fsz;
         }
+    } else if (wav.size() >= 8 && std::memcmp(&wav[4], "ftyp", 4) == 0) {
+        // ISO BMFF (M4A/MP4): the store is in a top-level 'uuid' box with the
+        // C2PA uuid, after a [16 uuid][4 reserved]["manifest\0"(9)][8 offset]=37
+        // byte prefix.
+        static const uint8_t C2PA_UUID[16] = {0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c,
+                                              0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81};
+        size_t o = 0;
+        while (o + 8 <= wav.size()) {
+            uint64_t bs = rd32be(&wav[o]);
+            size_t hdr = 8;
+            if (bs == 1 && o + 16 <= wav.size()) {
+                bs = 0;
+                for (int i = 0; i < 8; i++)
+                    bs = (bs << 8) | wav[o + 8 + i];
+                hdr = 16;
+            } else if (bs == 0) {
+                bs = wav.size() - o;
+            }
+            if (bs < hdr || o + bs > wav.size())
+                break;
+            if (std::memcmp(&wav[o + 4], "uuid", 4) == 0 && o + hdr + 16 <= wav.size() &&
+                std::memcmp(&wav[o + hdr], C2PA_UUID, 16) == 0) {
+                size_t sstart = o + hdr + 16 + 4 + 9 + 8; // reserved + "manifest\0" + merkle offset
+                if (sstart <= o + bs)
+                    store.assign(wav.begin() + sstart, wav.begin() + o + bs);
+                break;
+            }
+            o += bs;
+        }
     }
     if (store.empty()) {
         err.push_back("no C2PA manifest store found");
@@ -779,8 +1001,10 @@ VerifyResult verify_wav(const Bytes& wav) {
     std::vector<std::pair<std::string, JumbfBox>> boxes;
     jumbf_walk(store.data(), store.size(), boxes);
     const JumbfBox *claimBox = find_box(boxes, "c2pa.claim.v2"), *sigBox = find_box(boxes, "c2pa.signature"),
-                   *hashBox = find_box(boxes, "c2pa.hash.data"), *actBox = find_box(boxes, "c2pa.actions.v2");
-    if (!claimBox || !sigBox || !hashBox || !actBox) {
+                   *actBox = find_box(boxes, "c2pa.actions.v2");
+    const JumbfBox* hashBox = find_box(boxes, "c2pa.hash.data"); // byte-range (WAV/MP3)
+    const JumbfBox* bmffBox = find_box(boxes, "c2pa.hash.bmff.v3"); // BMFF (M4A/MP4)
+    if (!claimBox || !sigBox || !actBox || (!hashBox && !bmffBox)) {
         err.push_back("missing required JUMBF box");
         return res;
     }
@@ -866,26 +1090,95 @@ VerifyResult verify_wav(const Bytes& wav) {
         }
     }
 
-    // hard binding: data hash over file minus the manifest-store exclusion (the
-    // manifest always carries the exclusion range; default to none if missing).
-    Value hd = cbor_decode(hashBox->content, ok);
-    const Value* excls = ok ? hd.get("exclusions") : nullptr;
-    uint64_t exStart = 0, exLen = 0;
-    if (excls && excls->type == Value::ARRAY && !excls->arr.empty()) {
-        const Value* s = excls->arr[0].get("start");
-        const Value* l = excls->arr[0].get("length");
-        if (s)
-            exStart = uint64_t(s->i);
-        if (l)
-            exLen = uint64_t(l->i);
-    }
-    const Value* storedHash = ok ? hd.get("hash") : nullptr;
-    if (storedHash && exStart + exLen <= wav.size()) {
-        Bytes concat(wav.begin(), wav.begin() + exStart);
-        concat.insert(concat.end(), wav.begin() + exStart + exLen, wav.end());
-        auto fh = sha::sha256(concat);
-        res.data_hash_valid =
-            storedHash->bytes.size() == 32 && std::memcmp(fh.data(), storedHash->bytes.data(), 32) == 0;
+    // hard binding
+    if (hashBox) {
+        // byte-range data hash (WAV/MP3): hash file minus the [start,length) region.
+        Value hd = cbor_decode(hashBox->content, ok);
+        const Value* excls = ok ? hd.get("exclusions") : nullptr;
+        uint64_t exStart = 0, exLen = 0;
+        if (excls && excls->type == Value::ARRAY && !excls->arr.empty()) {
+            const Value* s = excls->arr[0].get("start");
+            const Value* l = excls->arr[0].get("length");
+            if (s)
+                exStart = uint64_t(s->i);
+            if (l)
+                exLen = uint64_t(l->i);
+        }
+        const Value* storedHash = ok ? hd.get("hash") : nullptr;
+        if (storedHash && exStart + exLen <= wav.size()) {
+            Bytes concat(wav.begin(), wav.begin() + exStart);
+            concat.insert(concat.end(), wav.begin() + exStart + exLen, wav.end());
+            auto fh = sha::sha256(concat);
+            res.data_hash_valid =
+                storedHash->bytes.size() == 32 && std::memcmp(fh.data(), storedHash->bytes.data(), 32) == 0;
+        }
+    } else {
+        // BMFF v3 hash (M4A/MP4): SHA-256 over, for each NON-excluded top-level
+        // box, BE64(box offset) ++ box bytes. Exclusions come from the assertion
+        // (xpath box types; /uuid additionally matched by a data value).
+        Value bh = cbor_decode(bmffBox->content, ok);
+        const Value* storedHash = ok ? bh.get("hash") : nullptr;
+        const Value* excls = ok ? bh.get("exclusions") : nullptr;
+        if (storedHash && storedHash->bytes.size() == 32) {
+            sha::Sha256 hh;
+            hh.init();
+            size_t o = 0;
+            while (o + 8 <= wav.size()) {
+                uint64_t bs = rd32be(&wav[o]);
+                size_t hdr = 8;
+                if (bs == 1 && o + 16 <= wav.size()) {
+                    bs = 0;
+                    for (int i = 0; i < 8; i++)
+                        bs = (bs << 8) | wav[o + 8 + i];
+                    hdr = 16;
+                } else if (bs == 0) {
+                    bs = wav.size() - o;
+                }
+                if (bs < hdr || o + bs > wav.size())
+                    break;
+                std::string btype(reinterpret_cast<const char*>(&wav[o + 4]), 4);
+                // is this box excluded?
+                bool excluded = false;
+                if (excls && excls->type == Value::ARRAY) {
+                    for (const Value& ex : excls->arr) {
+                        const Value* xp = ex.get("xpath");
+                        if (!xp || xp->str != "/" + btype)
+                            continue;
+                        const Value* dm = ex.get("data"); // optional data matcher
+                        bool matches = true;
+                        if (dm && dm->type == Value::ARRAY) {
+                            for (const Value& d : dm->arr) {
+                                const Value* offv = d.get("offset");
+                                const Value* valv = d.get("value");
+                                if (!offv || !valv)
+                                    continue;
+                                size_t doff = o + size_t(offv->i);
+                                if (doff + valv->bytes.size() > o + bs ||
+                                    std::memcmp(&wav[doff], valv->bytes.data(), valv->bytes.size()) != 0) {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (matches) {
+                            excluded = true;
+                            break;
+                        }
+                    }
+                }
+                if (!excluded) {
+                    uint8_t be[8];
+                    for (int i = 0; i < 8; i++)
+                        be[i] = uint8_t(o >> (56 - i * 8));
+                    hh.update(be, 8);
+                    hh.update(&wav[o], bs);
+                }
+                o += bs;
+            }
+            uint8_t out[32];
+            hh.final(out);
+            res.data_hash_valid = std::memcmp(out, storedHash->bytes.data(), 32) == 0;
+        }
     }
     if (!res.data_hash_valid)
         err.push_back("data hash (hard binding) mismatch");

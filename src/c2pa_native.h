@@ -39,6 +39,11 @@ Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string&
 Bytes sign_mp3(const Bytes& mp3, const std::string& cert_pem, const std::string& key_pem,
                const SignOptions& opts = SignOptions());
 
+// Sign an M4A/MP4 (ISO BMFF) by inserting a C2PA 'uuid' box and binding with a
+// c2pa.hash.bmff.v3 assertion. Returns the signed file or empty on failure.
+Bytes sign_m4a(const Bytes& m4a, const std::string& cert_pem, const std::string& key_pem,
+               const SignOptions& opts = SignOptions());
+
 // Result of verifying a signed WAV's C2PA manifest.
 struct VerifyResult {
     bool valid = false;            // signature + data hash + assertions all OK

@@ -9,6 +9,7 @@
 #include "default_cert.h"
 
 using crispasr::c2pa_native::Bytes;
+using crispasr::c2pa_native::sign_m4a;
 using crispasr::c2pa_native::sign_mp3;
 using crispasr::c2pa_native::sign_wav;
 using crispasr::c2pa_native::verify_wav;
@@ -27,6 +28,8 @@ extern "C" int c2pa_audio_sign(const unsigned char* in, size_t in_len, const cha
     Bytes signed_;
     if (fmt == "audio/mpeg" || fmt == "audio/mp3")
         signed_ = sign_mp3(data, cert, key);
+    else if (fmt == "audio/mp4" || fmt == "audio/m4a" || fmt == "audio/x-m4a")
+        signed_ = sign_m4a(data, cert, key);
     else if (fmt == "audio/wav" || fmt == "audio/x-wav" || fmt == "audio/wave")
         signed_ = sign_wav(data, cert, key);
     else

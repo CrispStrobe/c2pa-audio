@@ -97,10 +97,11 @@ int main(void) {
         size_t rlen;
 
         /* verify c2pa-rs reference vectors (their signer -> our verifier) */
-        const char* refs[2];
+        const char* refs[3];
         refs[0] = "reference-c2pa-rs.wav";
         refs[1] = "reference-c2pa-rs.mp3";
-        for (int i = 0; i < 2; i++) {
+        refs[2] = "reference-c2pa-rs.m4a";
+        for (int i = 0; i < 3; i++) {
             snprintf(path, sizeof(path), "%s/%s", C2PA_AUDIO_TEST_ASSETS, refs[i]);
             unsigned char* ref = read_file(path, &rlen);
             if (!ref) { printf("warn: reference vector missing (%s)\n", path); continue; }
@@ -110,21 +111,25 @@ int main(void) {
             free(ref);
         }
 
-        /* MP3 round-trip: sign an unsigned sample.mp3, then verify */
-        snprintf(path, sizeof(path), "%s/sample.mp3", C2PA_AUDIO_TEST_ASSETS);
-        unsigned char* mp3 = read_file(path, &rlen);
-        if (mp3) {
-            unsigned char* smp3 = NULL;
+        /* MP3 + M4A round-trips: sign an unsigned sample, then verify */
+        struct { const char* file; const char* mime; } samples[2];
+        samples[0].file = "sample.mp3"; samples[0].mime = "audio/mpeg";
+        samples[1].file = "sample.m4a"; samples[1].mime = "audio/mp4";
+        for (int i = 0; i < 2; i++) {
+            snprintf(path, sizeof(path), "%s/%s", C2PA_AUDIO_TEST_ASSETS, samples[i].file);
+            unsigned char* raw = read_file(path, &rlen);
+            if (!raw) continue;
+            unsigned char* sig = NULL;
             size_t slen = 0;
-            int mrc = c2pa_audio_sign(mp3, rlen, "audio/mpeg", NULL, NULL, &smp3, &slen);
-            if (mrc != 0 || slen <= rlen) { printf("FAIL: MP3 sign rc=%d\n", mrc); failures++; }
+            int src = c2pa_audio_sign(raw, rlen, samples[i].mime, NULL, NULL, &sig, &slen);
+            if (src != 0 || slen <= rlen) { printf("FAIL: %s sign rc=%d\n", samples[i].file, src); failures++; }
             else {
-                int mf = c2pa_audio_verify(smp3, slen);
-                if (mf != 0xF) { printf("FAIL: MP3 round-trip verify 0x%x\n", mf); failures++; }
-                else { printf("ok: MP3 round-trip VALID (%zu -> %zu)\n", rlen, slen); }
-                c2pa_audio_free(smp3);
+                int mf = c2pa_audio_verify(sig, slen);
+                if (mf != 0xF) { printf("FAIL: %s round-trip verify 0x%x\n", samples[i].file, mf); failures++; }
+                else { printf("ok: %s round-trip VALID (%zu -> %zu)\n", samples[i].file, rlen, slen); }
+                c2pa_audio_free(sig);
             }
-            free(mp3);
+            free(raw);
         }
     }
 #endif

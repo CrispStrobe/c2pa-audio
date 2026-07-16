@@ -70,6 +70,9 @@ func SignWav(wav []byte, certPem, keyPem string) ([]byte, error) {
 func SignMp3(mp3 []byte, certPem, keyPem string) ([]byte, error) {
 	return Sign(mp3, "audio/mpeg", certPem, keyPem)
 }
+func SignM4a(m4a []byte, certPem, keyPem string) ([]byte, error) {
+	return Sign(m4a, "audio/mp4", certPem, keyPem)
+}
 
 // Verify verifies a signed audio file (WAV or MP3, auto-detected).
 func Verify(data []byte) VerifyResult {
