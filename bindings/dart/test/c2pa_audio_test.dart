@@ -1,10 +1,10 @@
-// Dart FFI binding tests. Set CRISPASR_C2PA_LIB to the built shared library:
-//   dart test  (with CRISPASR_C2PA_LIB=/path/to/libcrispasr_c2pa.dylib)
+// Dart FFI binding tests. Set C2PA_AUDIO_LIB to the built shared library:
+//   dart test  (with C2PA_AUDIO_LIB=/path/to/libc2pa_audio.dylib)
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:crispasr_c2pa/crispasr_c2pa.dart';
+import 'package:c2pa_audio/c2pa_audio.dart';
 import 'package:test/test.dart';
 
 Uint8List makeWav({int n = 4800, int sr = 24000}) {
@@ -22,8 +22,8 @@ Uint8List makeWav({int n = 4800, int sr = 24000}) {
 }
 
 void main() {
-  final libEnv = Platform.environment['CRISPASR_C2PA_LIB'];
-  final c2pa = Crispc2pa.open();
+  final libEnv = Platform.environment['C2PA_AUDIO_LIB'];
+  final c2pa = C2paAudio.open();
 
   test('version', () {
     expect(c2pa.version, isNotEmpty);

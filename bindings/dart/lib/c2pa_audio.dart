@@ -1,6 +1,6 @@
-// crispasr_c2pa.dart — Dart FFI binding for the standalone C2PA signer/verifier.
+// c2pa_audio.dart — Dart FFI binding for the standalone C2PA signer/verifier.
 //
-// Loads libcrispasr_c2pa (shared library) and exposes signWav / verifyWav.
+// Loads libc2pa_audio (shared library) and exposes signWav / verifyWav.
 // Pure dart:ffi + package:ffi. Works on Dart VM and Flutter (desktop/mobile).
 import 'dart:ffi';
 import 'dart:io';
@@ -20,7 +20,7 @@ typedef _FreeDart = void Function(Pointer<Uint8> p);
 typedef _VersionNative = Pointer<Utf8> Function();
 typedef _VersionDart = Pointer<Utf8> Function();
 
-/// Result of [Crispc2pa.verifyWav].
+/// Result of [C2paAudio.verifyWav].
 class VerifyResult {
   final bool signatureValid;
   final bool dataHashValid;
@@ -33,25 +33,25 @@ class VerifyResult {
 }
 
 /// Native C2PA signer/verifier for WAV — no c2pa-rs.
-class Crispc2pa {
+class C2paAudio {
   final DynamicLibrary _lib;
-  late final _SignDart _sign = _lib.lookupFunction<_SignNative, _SignDart>('crispasr_c2pa_sign_wav');
-  late final _VerifyDart _verify = _lib.lookupFunction<_VerifyNative, _VerifyDart>('crispasr_c2pa_verify_wav');
-  late final _FreeDart _free = _lib.lookupFunction<_FreeNative, _FreeDart>('crispasr_c2pa_free');
-  late final _VersionDart _version = _lib.lookupFunction<_VersionNative, _VersionDart>('crispasr_c2pa_version');
+  late final _SignDart _sign = _lib.lookupFunction<_SignNative, _SignDart>('c2pa_audio_sign_wav');
+  late final _VerifyDart _verify = _lib.lookupFunction<_VerifyNative, _VerifyDart>('c2pa_audio_verify_wav');
+  late final _FreeDart _free = _lib.lookupFunction<_FreeNative, _FreeDart>('c2pa_audio_free');
+  late final _VersionDart _version = _lib.lookupFunction<_VersionNative, _VersionDart>('c2pa_audio_version');
 
-  Crispc2pa(this._lib);
+  C2paAudio(this._lib);
 
-  /// Open the shared library. Pass an explicit [path], else use CRISPASR_C2PA_LIB
-  /// env var, else the platform default (libcrispasr_c2pa.{dylib,so,dll}).
-  factory Crispc2pa.open([String? path]) {
-    path ??= Platform.environment['CRISPASR_C2PA_LIB'];
+  /// Open the shared library. Pass an explicit [path], else use C2PA_AUDIO_LIB
+  /// env var, else the platform default (libc2pa_audio.{dylib,so,dll}).
+  factory C2paAudio.open([String? path]) {
+    path ??= Platform.environment['C2PA_AUDIO_LIB'];
     if (path == null) {
-      if (Platform.isMacOS) path = 'libcrispasr_c2pa.dylib';
-      else if (Platform.isWindows) path = 'crispasr_c2pa.dll';
-      else path = 'libcrispasr_c2pa.so';
+      if (Platform.isMacOS) path = 'libc2pa_audio.dylib';
+      else if (Platform.isWindows) path = 'c2pa_audio.dll';
+      else path = 'libc2pa_audio.so';
     }
-    return Crispc2pa(DynamicLibrary.open(path));
+    return C2paAudio(DynamicLibrary.open(path));
   }
 
   String get version => _version().toDartString();
@@ -68,7 +68,7 @@ class Crispc2pa {
     final outLenPtr = malloc<IntPtr>();
     try {
       final rc = _sign(wavPtr, wav.length, certPtr.cast(), keyPtr.cast(), outPtr, outLenPtr);
-      if (rc != 0) throw StateError('crispasr_c2pa_sign_wav failed (rc=$rc)');
+      if (rc != 0) throw StateError('c2pa_audio_sign_wav failed (rc=$rc)');
       final len = outLenPtr.value;
       final out = Uint8List.fromList(outPtr.value.asTypedList(len));
       _free(outPtr.value);

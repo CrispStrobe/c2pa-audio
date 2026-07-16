@@ -1,6 +1,6 @@
 // crispasr_sha256.h — self-contained SHA-256 + HMAC-SHA256 (public domain).
 //
-// Used by the native C2PA signer (crispasr_c2pa_native.h) for the hard-binding
+// Used by the native C2PA signer (c2pa_audio_native.h) for the hard-binding
 // data hash, the assertion hashes, and uECC's RFC 6979 deterministic-k HMAC.
 // Header-only, no dependencies. Not constant-time (fine for public-data hashing
 // and RFC 6979 nonce derivation over a fixed message; the private scalar never

@@ -1,12 +1,12 @@
 import os, sys, struct, math
 sys.path.insert(0, os.path.dirname(__file__))
-from crispasr_c2pa import Crispc2pa
+from c2pa_audio import C2paAudio
 
 def make_wav(n=4800, sr=24000):
     data=b''.join(struct.pack('<h',int(3000*math.sin(2*math.pi*220*i/sr))) for i in range(n))
     return b'RIFF'+struct.pack('<I',36+len(data))+b'WAVE'+b'fmt '+struct.pack('<IHHIIHH',16,1,1,sr,sr*2,2,16)+b'data'+struct.pack('<I',len(data))+data
 
-c=Crispc2pa()
+c=C2paAudio()
 print("version:", c.version)
 wav=make_wav()
 signed=c.sign_wav(wav)

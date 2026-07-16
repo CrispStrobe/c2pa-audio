@@ -1,4 +1,4 @@
-// crispasr_c2pa_default_cert.h — GENERATED. Do not edit by hand.
+// c2pa_audio_default_cert.h — GENERATED. Do not edit by hand.
 //
 // A fixed, self-signed P-256/ES256 certificate + key baked into the binary so
 // C2PA signing is on by default on EVERY platform, including the WASM browser
@@ -15,7 +15,7 @@
 // then re-run scripts/gen-default-cert-header.sh.
 #pragma once
 
-inline const char* crispasr_c2pa_default_cert_pem() {
+inline const char* c2pa_audio_default_cert_pem() {
     return R"C2PA(-----BEGIN CERTIFICATE-----
 MIIB/TCCAaSgAwIBAgIUMl0G7RMhbZrc3Aqvd+4XSk5c5YcwCgYIKoZIzj0EAwIw
 QjEtMCsGA1UEAwwkQ3Jpc3BBU1IgKEFJLWdlbmVyYXRlZCwgc2VsZi1zaWduZWQp
@@ -31,7 +31,7 @@ IBpjspvSj9n7ndRcGZHiWUG7tNyVFTmf9Hj4Ym/Gop+w
 -----END CERTIFICATE-----
 )C2PA";
 }
-inline const char* crispasr_c2pa_default_key_pem() {
+inline const char* c2pa_audio_default_key_pem() {
     return R"C2PA(-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg/9P4J5n66VxxuGET
 +yu5U+0Z7zKRqZeklaMRurqtwrmhRANCAASg+eoWgUhN9yiih4LZ5tPnmUPEhNnt

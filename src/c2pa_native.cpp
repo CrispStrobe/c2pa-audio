@@ -1,8 +1,8 @@
-// crispasr_c2pa_native.cpp — implementation of crispasr_c2pa_native.h.
+// c2pa_audio_native.cpp — implementation of c2pa_audio_native.h.
 //
 // Compiled at C++17. All C++14/17-only constructs (generic lambdas,
 // multi-statement lambda return deduction, micro-ecc) live in this TU so the
-// C++11 crispasr-lib headers that include crispasr_c2pa_native.h stay clean.
+// C++11 crispasr-lib headers that include c2pa_audio_native.h stay clean.
 // See the header for the design overview.
 #include "c2pa_native.h"
 

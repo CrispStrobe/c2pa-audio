@@ -1,6 +1,6 @@
 /* c2pa_capi_test.c — smoke test for the C ABI: sign a WAV, verify it, verify a
  * c2pa-rs reference vector, and confirm tamper is rejected. Pure C, no deps. */
-#include "crispasr_c2pa.h"
+#include "c2pa_audio.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -56,14 +56,14 @@ static unsigned char* read_file(const char* path, size_t* len) {
 
 int main(void) {
     int failures = 0;
-    printf("crispasr-c2pa version %s\n", crispasr_c2pa_version());
+    printf("c2pa-audio version %s\n", c2pa_audio_version());
 
     /* sign with the bundled default cert */
     size_t wav_len = 0;
     unsigned char* wav = make_wav(&wav_len);
     unsigned char* signed_ = NULL;
     size_t signed_len = 0;
-    int rc = crispasr_c2pa_sign_wav(wav, wav_len, NULL, NULL, &signed_, &signed_len);
+    int rc = c2pa_audio_sign_wav(wav, wav_len, NULL, NULL, &signed_, &signed_len);
     if (rc != 0 || signed_len <= wav_len) {
         printf("FAIL: sign rc=%d len=%zu\n", rc, signed_len);
         failures++;
@@ -72,8 +72,8 @@ int main(void) {
     }
 
     /* verify the round-trip */
-    int flags = crispasr_c2pa_verify_wav(signed_, signed_len);
-    if (flags != (CRISPASR_C2PA_SIG_VALID | CRISPASR_C2PA_DATA_VALID | CRISPASR_C2PA_ASSERT_VALID | CRISPASR_C2PA_VALID)) {
+    int flags = c2pa_audio_verify_wav(signed_, signed_len);
+    if (flags != (C2PA_AUDIO_SIG_VALID | C2PA_AUDIO_DATA_VALID | C2PA_AUDIO_ASSERT_VALID | C2PA_AUDIO_VALID)) {
         printf("FAIL: round-trip verify flags=0x%x\n", flags);
         failures++;
     } else {
@@ -82,8 +82,8 @@ int main(void) {
 
     /* tamper the audio -> data hash must fail */
     signed_[46] ^= 0xff;
-    flags = crispasr_c2pa_verify_wav(signed_, signed_len);
-    if (flags & CRISPASR_C2PA_VALID) {
+    flags = c2pa_audio_verify_wav(signed_, signed_len);
+    if (flags & C2PA_AUDIO_VALID) {
         printf("FAIL: tamper not detected (flags=0x%x)\n", flags);
         failures++;
     } else {
@@ -92,17 +92,17 @@ int main(void) {
     signed_[46] ^= 0xff;
 
     /* verify a c2pa-rs reference vector (their signer -> our verifier) */
-#ifdef CRISPASR_C2PA_TEST_ASSETS
+#ifdef C2PA_AUDIO_TEST_ASSETS
     {
         char path[1024];
-        snprintf(path, sizeof(path), "%s/reference-c2pa-rs.wav", CRISPASR_C2PA_TEST_ASSETS);
+        snprintf(path, sizeof(path), "%s/reference-c2pa-rs.wav", C2PA_AUDIO_TEST_ASSETS);
         size_t rlen = 0;
         unsigned char* ref = read_file(path, &rlen);
         if (!ref) {
             printf("warn: reference vector missing (%s)\n", path);
         } else {
-            flags = crispasr_c2pa_verify_wav(ref, rlen);
-            if (!(flags & CRISPASR_C2PA_VALID)) {
+            flags = c2pa_audio_verify_wav(ref, rlen);
+            if (!(flags & C2PA_AUDIO_VALID)) {
                 printf("FAIL: c2pa-rs reference vector did not validate (0x%x)\n", flags);
                 failures++;
             } else {
@@ -113,7 +113,7 @@ int main(void) {
     }
 #endif
 
-    crispasr_c2pa_free(signed_);
+    c2pa_audio_free(signed_);
     free(wav);
     printf(failures ? "FAILED (%d)\n" : "PASSED\n", failures);
     return failures ? 1 : 0;

@@ -1,4 +1,4 @@
-// crispasr_c2pa_native.h — native C++ C2PA signer for WAV (no c2pa-rs / Rust).
+// c2pa_audio_native.h — native C++ C2PA signer for WAV (no c2pa-rs / Rust).
 //
 // The C++ twin of bindings/javascript/c2pa.mjs. Hand-builds canonical CBOR, the
 // JUMBF box tree, COSE_Sign1, and RIFF chunk embedding; signs with ES256
@@ -9,7 +9,7 @@
 // TTS output path; MP3/M4A stay on the native c2pa-rs lib when it is present.
 //
 // This header is a C++11-clean DECLARATION only (so it can be included from the
-// C++11 crispasr-lib TUs). The implementation lives in crispasr_c2pa_native.cpp
+// C++11 crispasr-lib TUs). The implementation lives in c2pa_audio_native.cpp
 // and is compiled at C++17.
 #pragma once
 #include <cstdint>

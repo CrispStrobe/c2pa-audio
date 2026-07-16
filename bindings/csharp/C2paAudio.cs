@@ -1,8 +1,8 @@
-// CrispC2pa.cs — C# P/Invoke binding for the standalone C2PA signer/verifier.
+// C2paAudio.cs — C# P/Invoke binding for the standalone C2PA signer/verifier.
 //
-// Loads libcrispasr_c2pa (native shared library) and exposes Sign / Verify.
+// Loads libc2pa_audio (native shared library) and exposes Sign / Verify.
 // No c2pa-rs. Place the native lib next to the assembly, or set the
-// CRISPASR_C2PA_LIB env var / use a runtimeconfig nativeLibrary probe.
+// C2PA_AUDIO_LIB env var / use a runtimeconfig nativeLibrary probe.
 using System;
 using System.Runtime.InteropServices;
 
@@ -27,21 +27,21 @@ namespace CrispAsr.C2pa
     }
 
     /// <summary>Native C2PA signer/verifier for WAV audio.</summary>
-    public static class CrispC2pa
+    public static class C2paAudio
     {
-        private const string Lib = "crispasr_c2pa"; // resolves to lib*.dylib/.so/.dll
+        private const string Lib = "c2pa_audio"; // resolves to lib*.dylib/.so/.dll
 
-        [DllImport(Lib, EntryPoint = "crispasr_c2pa_sign_wav", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport(Lib, EntryPoint = "c2pa_audio_sign_wav", CallingConvention = CallingConvention.Cdecl)]
         private static extern int SignWavNative(byte[] wav, nuint wavLen, string? certPem, string? keyPem,
             out IntPtr outPtr, out nuint outLen);
 
-        [DllImport(Lib, EntryPoint = "crispasr_c2pa_verify_wav", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport(Lib, EntryPoint = "c2pa_audio_verify_wav", CallingConvention = CallingConvention.Cdecl)]
         private static extern int VerifyWavNative(byte[] wav, nuint wavLen);
 
-        [DllImport(Lib, EntryPoint = "crispasr_c2pa_free", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport(Lib, EntryPoint = "c2pa_audio_free", CallingConvention = CallingConvention.Cdecl)]
         private static extern void FreeNative(IntPtr p);
 
-        [DllImport(Lib, EntryPoint = "crispasr_c2pa_version", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport(Lib, EntryPoint = "c2pa_audio_version", CallingConvention = CallingConvention.Cdecl)]
         private static extern IntPtr VersionNative();
 
         public static string Version() => Marshal.PtrToStringAnsi(VersionNative()) ?? "";
@@ -50,7 +50,7 @@ namespace CrispAsr.C2pa
         public static byte[] Sign(byte[] wav, string? certPem = null, string? keyPem = null)
         {
             int rc = SignWavNative(wav, (nuint)wav.Length, certPem, keyPem, out IntPtr outPtr, out nuint outLen);
-            if (rc != 0) throw new InvalidOperationException($"crispasr_c2pa_sign_wav failed (rc={rc})");
+            if (rc != 0) throw new InvalidOperationException($"c2pa_audio_sign_wav failed (rc={rc})");
             try
             {
                 var result = new byte[(int)outLen];

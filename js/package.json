@@ -6,5 +6,5 @@
   "exports": { "./sign": "./c2pa.mjs", "./verify": "./c2pa-verify.mjs", ".": "./c2pa.mjs" },
   "scripts": { "test": "node --test *.test.mjs" },
   "license": "MIT",
-  "repository": "github:CrispStrobe/crispasr-c2pa"
+  "repository": "github:CrispStrobe/c2pa-audio"
 }

@@ -1,4 +1,4 @@
-# crispasr-c2pa
+# c2pa-audio
 
 **Native C2PA (Content Credentials) signing & verification for WAV audio — no c2pa-rs, no Rust, no OpenSSL.**
 
@@ -37,7 +37,7 @@ mangled signature fails COSE verification.
 
 | Language        | How              | Location                   | Status |
 |-----------------|------------------|----------------------------|--------|
-| C / C++         | link the lib     | `include/crispasr_c2pa.h`  | ✅ tested |
+| C / C++         | link the lib     | `include/c2pa_audio.h`  | ✅ tested |
 | JavaScript / TS | pure WebCrypto   | `js/c2pa.mjs`, `js/c2pa-verify.mjs` | ✅ tested |
 | Dart / Flutter  | `dart:ffi`       | `bindings/dart/`           | ✅ tested |
 | Python          | `ctypes`         | `bindings/python/`         | ✅ tested |
@@ -55,21 +55,21 @@ cmake --build build
 ctest --test-dir build --output-on-failure     # C ABI round-trip + reference vector
 ```
 
-Produces `libcrispasr_c2pa.{dylib,so,dll}` (shared, for FFI) and `.a` (static).
+Produces `libc2pa_audio.{dylib,so,dll}` (shared, for FFI) and `.a` (static).
 
 ## C ABI
 
 ```c
-#include "crispasr_c2pa.h"
+#include "c2pa_audio.h"
 
 // sign (NULL cert/key -> bundled self-signed default cert)
 unsigned char* out; size_t out_len;
-crispasr_c2pa_sign_wav(wav, wav_len, NULL, NULL, &out, &out_len);
+c2pa_audio_sign_wav(wav, wav_len, NULL, NULL, &out, &out_len);
 
 // verify -> bit flags (0xF == fully valid)
-int flags = crispasr_c2pa_verify_wav(out, out_len);
+int flags = c2pa_audio_verify_wav(out, out_len);
 
-crispasr_c2pa_free(out);
+c2pa_audio_free(out);
 ```
 
 ## Quick starts
@@ -84,7 +84,7 @@ const result = await c2paVerifyWav(signed);   // { valid, signatureValid, ... }
 
 **Dart:**
 ```dart
-final c2pa = Crispc2pa.open();               // loads libcrispasr_c2pa
+final c2pa = C2paAudio.open();               // loads libc2pa_audio
 final signed = c2pa.signWav(wav);            // bundled default cert
 final r = c2pa.verifyWav(signed);            // r.valid == true
 ```
