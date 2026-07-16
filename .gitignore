@@ -8,3 +8,4 @@ bindings/dart/.dart_tool/
 bindings/dart/pubspec.lock
 bindings/go/go.sum
 bindings/python/__pycache__/
+build-fuzz/
