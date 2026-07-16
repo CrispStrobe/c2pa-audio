@@ -64,10 +64,10 @@ Produces `libc2pa_audio.{dylib,so,dll}` (shared, for FFI) and `.a` (static).
 
 // sign (NULL cert/key -> bundled self-signed default cert)
 unsigned char* out; size_t out_len;
-c2pa_audio_sign_wav(wav, wav_len, NULL, NULL, &out, &out_len);
+c2pa_audio_sign(wav, wav_len, "audio/wav", NULL, NULL, &out, &out_len);
 
 // verify -> bit flags (0xF == fully valid)
-int flags = c2pa_audio_verify_wav(out, out_len);
+int flags = c2pa_audio_verify(out, out_len);
 
 c2pa_audio_free(out);
 ```
@@ -86,7 +86,7 @@ const result = await c2paVerifyWav(signed);   // { valid, signatureValid, ... }
 ```dart
 final c2pa = C2paAudio.open();               // loads libc2pa_audio
 final signed = c2pa.signWav(wav);            // bundled default cert
-final r = c2pa.verifyWav(signed);            // r.valid == true
+final r = c2pa.verify(signed);               // r.valid == true
 ```
 
 **Python / Go / C#** — see `bindings/`.

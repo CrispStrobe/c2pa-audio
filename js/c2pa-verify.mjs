@@ -92,6 +92,27 @@ function findC2paChunk(file) {
     }
     return null;
   }
+  // ISO BMFF (M4A/MP4): store in a top-level 'uuid' box with the C2PA uuid
+  if (file.length >= 8 && file[4] === 0x66 && file[5] === 0x74 && file[6] === 0x79 && file[7] === 0x70) { // 'ftyp'
+    const UUID = [0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81];
+    let o = 0;
+    while (o + 8 <= file.length) {
+      let size = ((file[o] << 24) | (file[o + 1] << 16) | (file[o + 2] << 8) | file[o + 3]) >>> 0, hdr = 8;
+      if (size === 1) { size = Number(new DataView(file.buffer, file.byteOffset + o + 8, 8).getBigUint64(0)); hdr = 16; }
+      else if (size === 0) size = file.length - o;
+      if (size < hdr || o + size > file.length) break;
+      if (file[o + 4] === 0x75 && file[o + 5] === 0x75 && file[o + 6] === 0x69 && file[o + 7] === 0x64) { // 'uuid'
+        let match = o + hdr + 16 <= file.length;
+        for (let i = 0; match && i < 16; i++) if (file[o + hdr + i] !== UUID[i]) match = false;
+        if (match) {
+          const sstart = o + hdr + 16 + 4 + 9 + 8; // reserved + "manifest\0" + merkle offset
+          if (sstart <= o + size) return { start: o, size, body: file.subarray(sstart, o + size) };
+        }
+      }
+      o += size;
+    }
+    return null;
+  }
   return null;
 }
 function rd32be(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
@@ -161,9 +182,10 @@ export async function c2paVerifyWav(wavBytes) {
     const chunk = findC2paChunk(wavBytes);
     if (!chunk) { errors.push('no C2PA chunk in RIFF'); return res; }
     const boxes = walkJumbf(chunk.body);
-    for (const need of ['c2pa.claim.v2', 'c2pa.signature', 'c2pa.hash.data', 'c2pa.actions.v2']) {
+    for (const need of ['c2pa.claim.v2', 'c2pa.signature', 'c2pa.actions.v2']) {
       if (!boxes[need]) { errors.push('missing JUMBF box: ' + need); return res; }
     }
+    if (!boxes['c2pa.hash.data'] && !boxes['c2pa.hash.bmff.v3']) { errors.push('missing hard-binding assertion'); return res; }
 
     // --- decode claim + signature ---
     const claimBytes = boxes['c2pa.claim.v2'].content;
@@ -202,17 +224,57 @@ export async function c2paVerifyWav(wavBytes) {
     }
     res.assertionsValid = assertionsOk;
 
-    // --- verify hard binding (data hash over file minus the C2PA chunk region) ---
-    const hd = cborDecode(boxes['c2pa.hash.data'].content);
-    const hget = (k) => (hd instanceof Map ? hd.get(k) : hd[k]);
-    const excl = (hget('exclusions') || [])[0];
-    const exStart = excl ? (excl instanceof Map ? excl.get('start') : excl.start) : chunk.start;
-    const exLen = excl ? (excl instanceof Map ? excl.get('length') : excl.length) : (8 + chunk.size + (chunk.size & 1));
-    const storedFileHash = hget('hash');
-    const before = wavBytes.subarray(0, exStart);
-    const after = wavBytes.subarray(exStart + exLen);
-    const fileHash = await sha256(concat(before, after));
-    res.dataHashValid = eq(fileHash, storedFileHash);
+    // --- verify hard binding ---
+    if (boxes['c2pa.hash.data']) {
+      // byte-range data hash (WAV/MP3)
+      const hd = cborDecode(boxes['c2pa.hash.data'].content);
+      const hget = (k) => (hd instanceof Map ? hd.get(k) : hd[k]);
+      const excl = (hget('exclusions') || [])[0];
+      const exStart = excl ? (excl instanceof Map ? excl.get('start') : excl.start) : chunk.start;
+      const exLen = excl ? (excl instanceof Map ? excl.get('length') : excl.length) : (8 + chunk.size + (chunk.size & 1));
+      const storedFileHash = hget('hash');
+      const fileHash = await sha256(concat(wavBytes.subarray(0, exStart), wavBytes.subarray(exStart + exLen)));
+      res.dataHashValid = eq(fileHash, storedFileHash);
+    } else {
+      // BMFF v3 (M4A/MP4): SHA-256 over BE64(offset)++box for each non-excluded top box
+      const bh = cborDecode(boxes['c2pa.hash.bmff.v3'].content);
+      const bget = (k) => (bh instanceof Map ? bh.get(k) : bh[k]);
+      const storedFileHash = bget('hash');
+      const excls = bget('exclusions') || [];
+      const parts = [];
+      let o = 0;
+      while (o + 8 <= wavBytes.length) {
+        let size = ((wavBytes[o] << 24) | (wavBytes[o + 1] << 16) | (wavBytes[o + 2] << 8) | wavBytes[o + 3]) >>> 0, hdr = 8;
+        if (size === 1) { size = Number(new DataView(wavBytes.buffer, wavBytes.byteOffset + o + 8, 8).getBigUint64(0)); hdr = 16; }
+        else if (size === 0) size = wavBytes.length - o;
+        if (size < hdr || o + size > wavBytes.length) break;
+        const btype = '/' + String.fromCharCode(wavBytes[o + 4], wavBytes[o + 5], wavBytes[o + 6], wavBytes[o + 7]);
+        let excluded = false;
+        for (const ex of excls) {
+          const xp = ex instanceof Map ? ex.get('xpath') : ex.xpath;
+          if (xp !== btype) continue;
+          const dm = ex instanceof Map ? ex.get('data') : ex.data;
+          let matches = true;
+          if (dm) for (const d of dm) {
+            const off = d instanceof Map ? d.get('offset') : d.offset;
+            const val = d instanceof Map ? d.get('value') : d.value;
+            if (o + off + val.length > o + size) { matches = false; break; }
+            for (let i = 0; i < val.length; i++) if (wavBytes[o + off + i] !== val[i]) { matches = false; break; }
+            if (!matches) break;
+          }
+          if (matches) { excluded = true; break; }
+        }
+        if (!excluded) {
+          const be = new Uint8Array(8);
+          for (let i = 0; i < 8; i++) be[i] = Number((BigInt(o) >> BigInt(56 - i * 8)) & 0xffn);
+          parts.push(be); parts.push(wavBytes.subarray(o, o + size));
+        }
+        o += size;
+      }
+      let all = new Uint8Array(0);
+      for (const p of parts) all = concat(all, p);
+      res.dataHashValid = eq(await sha256(all), storedFileHash);
+    }
     if (!res.dataHashValid) errors.push('data hash (hard binding) mismatch');
 
     // --- surface manifest content ---

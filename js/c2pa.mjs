@@ -98,12 +98,12 @@ async function makeManifestBuilder(certPem, keyPem, opts) {
   function hashDataCbor(fileHash, exclStart, exclLen) {
     return cbor({ exclusions: [{ start: exclStart, length: exclLen }], name: 'jumbf manifest', alg: 'sha256', hash: fileHash, pad: new Uint8Array(8) });
   }
-  function buildClaim(hashDataAssnHash) {
+  function buildClaim(hardLabel, hardAssnHash) {
     return cbor({
       instanceID,
       claim_generator_info: gen,
       signature: `self#jumbf=/c2pa/${manifestUrn}/c2pa.signature`,
-      created_assertions: [{ url: 'self#jumbf=c2pa.assertions/c2pa.hash.data', hash: hashDataAssnHash }],
+      created_assertions: [{ url: 'self#jumbf=c2pa.assertions/' + hardLabel, hash: hardAssnHash }],
       gathered_assertions: [{ url: 'self#jumbf=c2pa.assertions/c2pa.actions.v2', hash: actionsHash }],
       alg: 'sha256',
     });
@@ -117,17 +117,33 @@ async function makeManifestBuilder(certPem, keyPem, opts) {
     const cose = tag(18, [protectedHdr, {}, null, sig]); // COSE_Sign1
     return jumb('c2cs', 'c2pa.signature', [cborBox(cbor(cose))]);
   }
-  async function assemble(fileHash, exclStart, exclLen, hashDataAssnHash) {
-    const hashDataBox = jumb('cbor', 'c2pa.hash.data', [cborBox(hashDataCbor(fileHash, exclStart, exclLen))]);
-    const assertionsBox = jumb('c2as', 'c2pa.assertions', [actionsBox, hashDataBox]);
-    const claimBytes = buildClaim(hashDataAssnHash);
+  // Generic: assemble the store around a caller-built hard-binding box.
+  async function assembleWith(hardBox, hardLabel, hardAssnHash) {
+    const assertionsBox = jumb('c2as', 'c2pa.assertions', [actionsBox, hardBox]);
+    const claimBytes = buildClaim(hardLabel, hardAssnHash);
     const claimBox = jumb('c2cl', 'c2pa.claim.v2', [cborBox(claimBytes)]);
     const sigBox = await buildCoseBox(claimBytes);
     const manifestBox = jumb('c2ma', manifestUrn, [assertionsBox, claimBox, sigBox]);
-    const store = jumb('c2pa', 'c2pa', [manifestBox]); // top c2pa superbox
+    return jumb('c2pa', 'c2pa', [manifestBox]); // top c2pa superbox
+  }
+  async function assemble(fileHash, exclStart, exclLen, hashDataAssnHash) {
+    const hashDataBox = jumb('cbor', 'c2pa.hash.data', [cborBox(hashDataCbor(fileHash, exclStart, exclLen))]);
+    const store = await assembleWith(hashDataBox, 'c2pa.hash.data', hashDataAssnHash);
     return { store, hashDataBox };
   }
-  return { assemble, assertionHash };
+  return { assemble, assembleWith, assertionHash };
+}
+
+const C2PA_UUID = Uint8Array.of(0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81);
+// Build the c2pa.hash.bmff.v3 assertion CBOR (box-path exclusions + BMFF hash).
+function bmffV3Cbor(bmffHash) {
+  return cbor({
+    exclusions: [
+      { xpath: '/uuid', data: [{ offset: 8, value: C2PA_UUID }] },
+      { xpath: '/ftyp' }, { xpath: '/mfra' }, { xpath: '/free' }, { xpath: '/skip' },
+    ],
+    alg: 'sha256', hash: bmffHash, name: 'jumbf manifest',
+  });
 }
 
 // Run the 4-pass fixed-point protocol given container callbacks.
@@ -203,6 +219,84 @@ export async function c2paSignMp3(mp3Bytes, certPem, keyPem, opts = {}) {
     return cat([te.encode('ID3'), Uint8Array.of(4, 0, 0), ssBytes(frames.length), frames, audio]);
   };
   return signWithLayout(builder, () => exclStart, (store) => store.length, assembleFile);
+}
+
+// ---- ISO BMFF (M4A/MP4) helpers ----
+function be32(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
+function be64bytes(n) { const a = new Uint8Array(8); for (let i = 0; i < 8; i++) a[i] = Number((BigInt(n) >> BigInt(56 - i * 8)) & 0xffn); return a; }
+function bmffBox(b, o) { // -> {size, hdr}
+  let size = be32(b, o), hdr = 8;
+  if (size === 1) { size = Number(new DataView(b.buffer, b.byteOffset + o + 8, 8).getBigUint64(0)); hdr = 16; }
+  else if (size === 0) size = b.length - o;
+  return { size, hdr };
+}
+function memeq(b, o, ascii) { for (let i = 0; i < ascii.length; i++) if (b[o + i] !== ascii.charCodeAt(i)) return false; return true; }
+function isC2paUuid(b, o) { for (let i = 0; i < 16; i++) if (b[o + i] !== C2PA_UUID[i]) return false; return true; }
+// SHA-256 over each non-excluded top-level box: BE64(offset) ++ box bytes.
+async function bmffV3Hash(file) {
+  const parts = [];
+  let o = 0;
+  while (o + 8 <= file.length) {
+    const { size, hdr } = bmffBox(file, o);
+    if (size < hdr || o + size > file.length) break;
+    let excl = memeq(file, o + 4, 'ftyp') || memeq(file, o + 4, 'free') || memeq(file, o + 4, 'mfra') || memeq(file, o + 4, 'skip');
+    if (memeq(file, o + 4, 'uuid') && o + hdr + 16 <= file.length && isC2paUuid(file, o + hdr)) excl = true;
+    if (!excl) { parts.push(be64bytes(o)); parts.push(file.subarray(o, o + size)); }
+    o += size;
+  }
+  return sha256(cat(parts));
+}
+// Adjust stco/co64 offsets by +delta within [start,end) (recurses moov path).
+function adjustChunkOffsets(out, start, end, delta) {
+  let o = start;
+  while (o + 8 <= end) {
+    const { size, hdr } = bmffBox(out, o);
+    if (size < hdr || o + size > end) break;
+    if (memeq(out, o + 4, 'stco') || memeq(out, o + 4, 'co64')) {
+      const is64 = memeq(out, o + 4, 'co64');
+      let p = o + hdr + 4;
+      const count = be32(out, p); p += 4;
+      const dv = new DataView(out.buffer, out.byteOffset);
+      for (let i = 0; i < count; i++) {
+        if (is64) { dv.setBigUint64(p, dv.getBigUint64(p) + BigInt(delta)); p += 8; }
+        else { dv.setUint32(p, (dv.getUint32(p) + delta) >>> 0); p += 4; }
+      }
+    } else if (memeq(out, o + 4, 'moov') || memeq(out, o + 4, 'trak') || memeq(out, o + 4, 'mdia') || memeq(out, o + 4, 'minf') || memeq(out, o + 4, 'stbl')) {
+      adjustChunkOffsets(out, o + hdr, o + size, delta);
+    }
+    o += size;
+  }
+}
+
+// Sign an M4A/MP4 (ISO BMFF): insert a C2PA 'uuid' box after 'ftyp' and bind
+// with a c2pa.hash.bmff.v3 assertion (offset-prepend hash + stco/co64 fixups).
+export async function c2paSignM4a(m4aBytes, certPem, keyPem, opts = {}) {
+  if (m4aBytes.length < 16 || !memeq(m4aBytes, 4, 'ftyp')) throw new Error('not an ISO BMFF (M4A) file');
+  const builder = await makeManifestBuilder(certPem, keyPem, opts);
+  const { assembleWith, assertionHash } = builder;
+  const ZERO = new Uint8Array(32);
+  const ftyp = bmffBox(m4aBytes, 0);
+  const insertAt = ftyp.size;
+  const uuidBox = (store) => {
+    const sz = 8 + 16 + 4 + 9 + 8 + store.length;
+    return cat([u32be(sz), te.encode('uuid'), C2PA_UUID, new Uint8Array(4), te.encode('manifest'), Uint8Array.of(0), new Uint8Array(8), store]);
+  };
+  const buildFile = (store) => {
+    const ub = uuidBox(store);
+    const out = cat([m4aBytes.subarray(0, insertAt), ub, m4aBytes.subarray(insertAt)]);
+    adjustChunkOffsets(out, insertAt + ub.length, out.length, ub.length);
+    return out;
+  };
+  const assembleBmff = async (bmffHash, hardAssnHash) => {
+    const box = jumb('cbor', 'c2pa.hash.bmff.v3', [cborBox(bmffV3Cbor(bmffHash))]);
+    return { store: await assembleWith(box, 'c2pa.hash.bmff.v3', hardAssnHash), hardBox: box };
+  };
+  const placeholder = (await assembleBmff(ZERO, ZERO)).store;
+  const bhash = await bmffV3Hash(buildFile(placeholder));
+  const a3 = await assembleBmff(bhash, ZERO);
+  const hardAssnHash = await assertionHash(a3.hardBox);
+  const a4 = await assembleBmff(bhash, hardAssnHash);
+  return buildFile(a4.store);
 }
 function u32beLE(n) { return Uint8Array.of(n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255); } // little-endian for RIFF
 
