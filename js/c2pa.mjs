@@ -83,26 +83,21 @@ function pemToDer(pem, kind) {
 
 // Sign PCM-derived WAV bytes (already a WAV container) with a C2PA manifest.
 // certPem/keyPem: PEM strings. Returns signed WAV Uint8Array.
-export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
+// Container-agnostic manifest-store builder (JUMBF/CBOR/COSE/ES256). Returns
+// { assemble(fileHash, exclStart, exclLen, hashDataAssnHash) -> {store,hashDataBox},
+//   assertionHash }. WAV and MP3 reuse this; only the embedding differs.
+async function makeManifestBuilder(certPem, keyPem, opts) {
   const gen = opts.generator || { name: 'CrispASR', version: '0.6' };
   const manifestUrn = 'urn:c2pa:' + crypto.randomUUID();
   const instanceID = 'xmp:iid:' + crypto.randomUUID();
-
-  // --- assertions ---
   const actionsCbor = cbor({ actions: [{ action: 'c2pa.created', softwareAgent: opts.softwareAgent || 'CrispASR TTS', digitalSourceType: 'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia' }] });
   const actionsBox = jumb('cbor', 'c2pa.actions.v2', [cborBox(actionsCbor)]);
-  // c2pa hashed-URI: hash of the assertion JUMBF box WITHOUT its 8-byte outer
-  // header (i.e. over jumd + content boxes). Verified against c2pa-rs output.
+  // c2pa hashed-URI: hash of the assertion box WITHOUT its 8-byte outer header.
   const assertionHash = (box) => sha256(box.subarray(8));
   const actionsHash = await assertionHash(actionsBox);
-
-  // hash.data assertion: hash + exclusions filled after layout is known. Build
-  // with a zero placeholder hash first (its box SIZE is fixed).
-  const ZERO = new Uint8Array(32);
   function hashDataCbor(fileHash, exclStart, exclLen) {
     return cbor({ exclusions: [{ start: exclStart, length: exclLen }], name: 'jumbf manifest', alg: 'sha256', hash: fileHash, pad: new Uint8Array(8) });
   }
-  // --- claim (sizes fixed; hashes/signature filled later, all same length) ---
   function buildClaim(hashDataAssnHash) {
     return cbor({
       instanceID,
@@ -113,7 +108,6 @@ export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
       alg: 'sha256',
     });
   }
-  // --- COSE signature box (size fixed: 64-byte sig placeholder) ---
   const certDer = pemToDer(certPem, 'CERTIFICATE');
   const key = await crypto.subtle.importKey('pkcs8', pemToDer(keyPem, 'PRIVATE KEY'), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   const protectedHdr = coseProtected(certDer);
@@ -123,8 +117,6 @@ export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
     const cose = tag(18, [protectedHdr, {}, null, sig]); // COSE_Sign1
     return jumb('c2cs', 'c2pa.signature', [cborBox(cbor(cose))]);
   }
-
-  // --- Two-pass layout: assemble with placeholders to learn sizes/offsets ---
   async function assemble(fileHash, exclStart, exclLen, hashDataAssnHash) {
     const hashDataBox = jumb('cbor', 'c2pa.hash.data', [cborBox(hashDataCbor(fileHash, exclStart, exclLen))]);
     const assertionsBox = jumb('c2as', 'c2pa.assertions', [actionsBox, hashDataBox]);
@@ -133,46 +125,84 @@ export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
     const sigBox = await buildCoseBox(claimBytes);
     const manifestBox = jumb('c2ma', manifestUrn, [assertionsBox, claimBox, sigBox]);
     const store = jumb('c2pa', 'c2pa', [manifestBox]); // top c2pa superbox
-    return { store, hashDataBox, claimBytes };
+    return { store, hashDataBox };
   }
-  // Where does the C2PA chunk go? After all existing RIFF chunks (append).
-  const chunkStart = wavBytes.length; // append at end
-  const exclStart = chunkStart;
-  // The chunk length (exclLen) is embedded INSIDE the hash.data exclusion, and
-  // its CBOR integer width changes the store size — so iterate to a fixed point.
-  let exclLen = 0;
+  return { assemble, assertionHash };
+}
+
+// Run the 4-pass fixed-point protocol given container callbacks.
+//   exclStartFor(store) -> byte offset of the excluded region in the assembled file
+//   exclLenFor(store)   -> length of the excluded region (== store-derived)
+//   assembleFile(store) -> the full container bytes
+async function signWithLayout(builder, exclStartFor, exclLenFor, assembleFile) {
+  const { assemble, assertionHash } = builder;
+  const ZERO = new Uint8Array(32);
+  // fixed point on the exclusion (store size feeds back through its CBOR width)
+  let exclStart = exclStartFor(new Uint8Array(0)), exclLen = 0;
   for (let i = 0; i < 6; i++) {
     const st = (await assemble(ZERO, exclStart, exclLen, ZERO)).store;
-    const n = 8 + st.length + (st.length & 1); // RIFF 'C2PA' + size + pad
-    if (n === exclLen) break;
-    exclLen = n;
+    const es = exclStartFor(st), el = exclLenFor(st);
+    if (es === exclStart && el === exclLen) break;
+    exclStart = es; exclLen = el;
   }
-  let a;
-  // build final file layout with the chunk region present (zeros) so the file
-  // hash is over everything EXCEPT [exclStart, exclLen].
-  function withChunk(store) {
+  const fileHashExcluding = async (full) => sha256(cat([full.subarray(0, exclStart), full.subarray(exclStart + exclLen)]));
+  const tmp = assembleFile((await assemble(ZERO, exclStart, exclLen, ZERO)).store);
+  const fileHash = await fileHashExcluding(tmp);
+  let a = await assemble(fileHash, exclStart, exclLen, ZERO);
+  const hashDataAssnHash = await assertionHash(a.hashDataBox);
+  a = await assemble(fileHash, exclStart, exclLen, hashDataAssnHash);
+  return assembleFile(a.store);
+}
+
+// Sign a WAV (RIFF 'C2PA' chunk appended at the end).
+export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
+  const builder = await makeManifestBuilder(certPem, keyPem, opts);
+  const chunkStart = wavBytes.length;
+  const withChunk = (store) => {
     const pad = (store.length & 1) ? Uint8Array.of(0) : new Uint8Array(0);
     const chunk = cat([te.encode('C2PA'), u32beLE(store.length), store, pad]);
     const out = cat([wavBytes.subarray(0, chunkStart), chunk]);
-    // fix RIFF size (bytes 4..8) = total - 8
-    new DataView(out.buffer).setUint32(4, out.length - 8, true);
+    new DataView(out.buffer).setUint32(4, out.length - 8, true); // RIFF size = total - 8
     return out;
+  };
+  return signWithLayout(builder, () => chunkStart, (store) => 8 + store.length + (store.length & 1), withChunk);
+}
+
+// Sign an MP3 (manifest store in an ID3v2.4 GEOB frame). Preserves existing
+// ID3v2.4 frames. The data-hash exclusion covers exactly the GEOB object.
+export async function c2paSignMp3(mp3Bytes, certPem, keyPem, opts = {}) {
+  const builder = await makeManifestBuilder(certPem, keyPem, opts);
+  const synchsafe = (b, o) => (b[o] << 21) | (b[o + 1] << 14) | (b[o + 2] << 7) | b[o + 3];
+  const ssBytes = (n) => Uint8Array.of((n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f);
+
+  let existingFrames = new Uint8Array(0), audioStart = 0;
+  if (mp3Bytes.length >= 10 && mp3Bytes[0] === 0x49 && mp3Bytes[1] === 0x44 && mp3Bytes[2] === 0x33 && mp3Bytes[3] === 4) {
+    const tagEnd = 10 + synchsafe(mp3Bytes, 6);
+    if (tagEnd <= mp3Bytes.length) {
+      audioStart = tagEnd;
+      const frames = [];
+      let o = 10;
+      while (o + 10 <= tagEnd) {
+        if (mp3Bytes[o] === 0) break; // padding
+        const fsz = synchsafe(mp3Bytes, o + 4);
+        if (o + 10 + fsz > tagEnd) break;
+        frames.push(mp3Bytes.subarray(o, o + 10 + fsz));
+        o += 10 + fsz;
+      }
+      existingFrames = cat(frames);
+    }
   }
-  // compute file hash excluding the chunk region
-  async function fileHashExcluding(fullFile) {
-    const before = fullFile.subarray(0, exclStart);
-    const after = fullFile.subarray(exclStart + exclLen);
-    return await sha256(cat([before, after]));
-  }
-  // pass 2: real file hash
-  let tmp = withChunk((await assemble(ZERO, exclStart, exclLen, ZERO)).store);
-  const fileHash = await fileHashExcluding(tmp);
-  // pass 3: hash.data box now has real hash -> its box hash -> claim created_assertions
-  a = await assemble(fileHash, exclStart, exclLen, ZERO);
-  const hashDataAssnHash = await assertionHash(a.hashDataBox);
-  // pass 4: final assemble with real assertion hash (claim now final -> re-sign)
-  a = await assemble(fileHash, exclStart, exclLen, hashDataAssnHash);
-  return withChunk(a.store);
+  const audio = mp3Bytes.subarray(audioStart);
+  const geobPrefix = cat([Uint8Array.of(0), te.encode('application/c2pa'), Uint8Array.of(0), Uint8Array.of(0), te.encode('c2pa manifest store'), Uint8Array.of(0)]);
+  const exclStart = 10 + existingFrames.length + 10 + geobPrefix.length;
+
+  const assembleFile = (store) => {
+    const geobBody = cat([geobPrefix, store]);
+    const geob = cat([te.encode('GEOB'), ssBytes(geobBody.length), Uint8Array.of(0, 0), geobBody]);
+    const frames = cat([existingFrames, geob]);
+    return cat([te.encode('ID3'), Uint8Array.of(4, 0, 0), ssBytes(frames.length), frames, audio]);
+  };
+  return signWithLayout(builder, () => exclStart, (store) => store.length, assembleFile);
 }
 function u32beLE(n) { return Uint8Array.of(n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255); } // little-endian for RIFF
 

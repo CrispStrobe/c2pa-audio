@@ -1,6 +1,6 @@
 # c2pa-audio
 
-**Native C2PA (Content Credentials) signing & verification for WAV audio — no c2pa-rs, no Rust, no OpenSSL.**
+**Native C2PA (Content Credentials) signing & verification for WAV + MP3 audio — no c2pa-rs, no Rust, no OpenSSL.**
 
 A tiny (~160 KB), dependency-light implementation of the [C2PA](https://c2pa.org)
 manifest format: canonical CBOR, JUMBF boxes, COSE_Sign1, and **ES256**
@@ -93,9 +93,15 @@ final r = c2pa.verifyWav(signed);            // r.valid == true
 
 ## Scope
 
-WAV audio, sign + verify. Trust-anchor evaluation is out of scope (a self-signed
-cert verifies cryptographically but is "untrusted" to a full validator). MP3/M4A
-embedding is not implemented here — use c2pa-rs for those containers.
+**WAV** (RIFF `C2PA` chunk) and **MP3** (ID3v2.4 GEOB frame), sign + verify —
+both fully interoperable with c2pa-rs. Trust-anchor evaluation is out of scope
+(a self-signed cert verifies cryptographically but is "untrusted" to a full
+validator). **M4A/MP4** uses a different, heavier hash binding
+(`c2pa.hash.bmff.v3`) and is not yet implemented — use c2pa-rs for that. AAC
+(ADTS) and Opus (Ogg) have no C2PA embedding path in the spec.
+
+Signing API takes a MIME type: `"audio/wav"` or `"audio/mpeg"`. Verification
+auto-detects the container.
 
 ## Licensing
 

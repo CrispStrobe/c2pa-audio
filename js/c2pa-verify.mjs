@@ -55,15 +55,42 @@ function cborDecode(bytes) {
   return v;
 }
 
-// -------------------------------------------------------------------- RIFF + JUMBF
-function findC2paChunk(wav) {
-  const dv = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
-  let off = 12;
-  while (off + 8 <= wav.length) {
-    const id = String.fromCharCode(wav[off], wav[off + 1], wav[off + 2], wav[off + 3]);
-    const sz = dv.getUint32(off + 4, true);
-    if (id === 'C2PA') return { start: off, size: sz, body: wav.subarray(off + 8, off + 8 + sz) };
-    off += 8 + sz + (sz & 1);
+// ------------------------------------------------- container store extraction
+// Locate the C2PA manifest store — RIFF 'C2PA' chunk (WAV) or ID3v2 GEOB frame
+// (MP3). Returns { body } holding the store bytes, or null.
+function findC2paChunk(file) {
+  // WAV RIFF
+  if (file.length >= 12 && file[0] === 0x52 && file[1] === 0x49 && file[2] === 0x46 && file[3] === 0x46) {
+    const dv = new DataView(file.buffer, file.byteOffset, file.byteLength);
+    let off = 12;
+    while (off + 8 <= file.length) {
+      const id = String.fromCharCode(file[off], file[off + 1], file[off + 2], file[off + 3]);
+      const sz = dv.getUint32(off + 4, true);
+      if (id === 'C2PA') return { start: off, size: sz, body: file.subarray(off + 8, off + 8 + sz) };
+      off += 8 + sz + (sz & 1);
+    }
+    return null;
+  }
+  // MP3 ID3v2 GEOB frame with mime "application/c2pa"
+  if (file.length >= 10 && file[0] === 0x49 && file[1] === 0x44 && file[2] === 0x33) {
+    const ss = (o) => (file[o] << 21) | (file[o + 1] << 14) | (file[o + 2] << 7) | file[o + 3];
+    const end = Math.min(file.length, 10 + ss(6));
+    for (let o = 10; o + 10 <= end;) {
+      if (file[o] === 0) break; // padding
+      const fsz = ss(o + 4);
+      if (o + 10 + fsz > end) break;
+      const id = String.fromCharCode(file[o], file[o + 1], file[o + 2], file[o + 3]);
+      if (id === 'GEOB') {
+        const body = file.subarray(o + 10, o + 10 + fsz);
+        let p = 1; // skip encoding byte
+        const nul = () => { while (p < body.length && body[p] !== 0) p++; const s = p; p++; return s; };
+        const mimeEnd = nul(); const mime = String.fromCharCode(...body.subarray(1, mimeEnd));
+        nul(); nul(); // filename, description
+        if (mime === 'application/c2pa') return { start: o, size: fsz, body: body.subarray(p) };
+      }
+      o += 10 + fsz;
+    }
+    return null;
   }
   return null;
 }

@@ -34,3 +34,16 @@ test('c2pa-rs reference vector validates', async () => {
   if (!fs.existsSync(p)) return;
   assert.equal((await c2paVerifyWav(new Uint8Array(fs.readFileSync(p)))).valid, true);
 });
+
+import { c2paSignMp3 } from './c2pa.mjs';
+test('MP3 sign -> verify round-trip', async () => {
+  const p = path.join(here, 'sample.mp3');
+  if (!fs.existsSync(p)) return;
+  const signed = await c2paSignMp3(new Uint8Array(fs.readFileSync(p)), DEFAULT_CERT_PEM, DEFAULT_KEY_PEM);
+  assert.equal((await c2paVerifyWav(signed)).valid, true);
+});
+test('c2pa-rs MP3 reference validates (their signer -> our verifier)', async () => {
+  const p = path.join(here, 'reference-c2pa-rs.mp3');
+  if (!fs.existsSync(p)) return;
+  assert.equal((await c2paVerifyWav(new Uint8Array(fs.readFileSync(p)))).valid, true);
+});
