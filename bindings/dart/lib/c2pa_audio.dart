@@ -9,10 +9,22 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 // ---- C signatures ----
-typedef _SignNative = Int32 Function(Pointer<Uint8> in_, IntPtr inLen, Pointer<Utf8> mime, Pointer<Utf8> cert,
-    Pointer<Utf8> key, Pointer<Pointer<Uint8>> out, Pointer<IntPtr> outLen);
-typedef _SignDart = int Function(Pointer<Uint8> in_, int inLen, Pointer<Utf8> mime, Pointer<Utf8> cert,
-    Pointer<Utf8> key, Pointer<Pointer<Uint8>> out, Pointer<IntPtr> outLen);
+typedef _SignNative = Int32 Function(
+    Pointer<Uint8> in_,
+    IntPtr inLen,
+    Pointer<Utf8> mime,
+    Pointer<Utf8> cert,
+    Pointer<Utf8> key,
+    Pointer<Pointer<Uint8>> out,
+    Pointer<IntPtr> outLen);
+typedef _SignDart = int Function(
+    Pointer<Uint8> in_,
+    int inLen,
+    Pointer<Utf8> mime,
+    Pointer<Utf8> cert,
+    Pointer<Utf8> key,
+    Pointer<Pointer<Uint8>> out,
+    Pointer<IntPtr> outLen);
 typedef _VerifyNative = Int32 Function(Pointer<Uint8> in_, IntPtr inLen);
 typedef _VerifyDart = int Function(Pointer<Uint8> in_, int inLen);
 typedef _FreeNative = Void Function(Pointer<Uint8> p);
@@ -26,7 +38,8 @@ class VerifyResult {
   final bool dataHashValid;
   final bool assertionsValid;
   final bool valid;
-  const VerifyResult(this.signatureValid, this.dataHashValid, this.assertionsValid, this.valid);
+  const VerifyResult(this.signatureValid, this.dataHashValid,
+      this.assertionsValid, this.valid);
   @override
   String toString() =>
       'VerifyResult(valid: $valid, sig: $signatureValid, data: $dataHashValid, assertions: $assertionsValid)';
@@ -35,10 +48,14 @@ class VerifyResult {
 /// Native C2PA signer/verifier for WAV — no c2pa-rs.
 class C2paAudio {
   final DynamicLibrary _lib;
-  late final _SignDart _sign = _lib.lookupFunction<_SignNative, _SignDart>('c2pa_audio_sign');
-  late final _VerifyDart _verify = _lib.lookupFunction<_VerifyNative, _VerifyDart>('c2pa_audio_verify');
-  late final _FreeDart _free = _lib.lookupFunction<_FreeNative, _FreeDart>('c2pa_audio_free');
-  late final _VersionDart _version = _lib.lookupFunction<_VersionNative, _VersionDart>('c2pa_audio_version');
+  late final _SignDart _sign =
+      _lib.lookupFunction<_SignNative, _SignDart>('c2pa_audio_sign');
+  late final _VerifyDart _verify =
+      _lib.lookupFunction<_VerifyNative, _VerifyDart>('c2pa_audio_verify');
+  late final _FreeDart _free =
+      _lib.lookupFunction<_FreeNative, _FreeDart>('c2pa_audio_free');
+  late final _VersionDart _version =
+      _lib.lookupFunction<_VersionNative, _VersionDart>('c2pa_audio_version');
 
   C2paAudio(this._lib);
 
@@ -47,9 +64,13 @@ class C2paAudio {
   factory C2paAudio.open([String? path]) {
     path ??= Platform.environment['C2PA_AUDIO_LIB'];
     if (path == null) {
-      if (Platform.isMacOS) path = 'libc2pa_audio.dylib';
-      else if (Platform.isWindows) path = 'c2pa_audio.dll';
-      else path = 'libc2pa_audio.so';
+      if (Platform.isMacOS) {
+        path = 'libc2pa_audio.dylib';
+      } else if (Platform.isWindows) {
+        path = 'c2pa_audio.dll';
+      } else {
+        path = 'libc2pa_audio.so';
+      }
     }
     return C2paAudio(DynamicLibrary.open(path));
   }
@@ -60,7 +81,8 @@ class C2paAudio {
   /// "audio/mpeg". Pass PEM strings for a custom identity, or leave null to use
   /// the bundled self-signed default cert. Returns the signed bytes; throws
   /// [StateError] on failure.
-  Uint8List sign(Uint8List data, {String mime = 'audio/wav', String? certPem, String? keyPem}) {
+  Uint8List sign(Uint8List data,
+      {String mime = 'audio/wav', String? certPem, String? keyPem}) {
     final dataPtr = malloc<Uint8>(data.length);
     dataPtr.asTypedList(data.length).setAll(0, data);
     final mimePtr = mime.toNativeUtf8();
@@ -69,7 +91,8 @@ class C2paAudio {
     final outPtr = malloc<Pointer<Uint8>>();
     final outLenPtr = malloc<IntPtr>();
     try {
-      final rc = _sign(dataPtr, data.length, mimePtr, certPtr.cast(), keyPtr.cast(), outPtr, outLenPtr);
+      final rc = _sign(dataPtr, data.length, mimePtr, certPtr.cast(),
+          keyPtr.cast(), outPtr, outLenPtr);
       if (rc != 0) throw StateError('c2pa_audio_sign failed (rc=$rc)');
       final out = Uint8List.fromList(outPtr.value.asTypedList(outLenPtr.value));
       _free(outPtr.value);
@@ -98,7 +121,8 @@ class C2paAudio {
     dataPtr.asTypedList(data.length).setAll(0, data);
     try {
       final f = _verify(dataPtr, data.length);
-      return VerifyResult((f & 0x1) != 0, (f & 0x2) != 0, (f & 0x4) != 0, (f & 0x8) != 0);
+      return VerifyResult(
+          (f & 0x1) != 0, (f & 0x2) != 0, (f & 0x4) != 0, (f & 0x8) != 0);
     } finally {
       malloc.free(dataPtr);
     }
