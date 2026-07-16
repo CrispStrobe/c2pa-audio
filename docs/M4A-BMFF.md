@@ -1,61 +1,40 @@
-# M4A / MP4 (ISO BMFF) C2PA support — investigation notes
+# M4A / MP4 (ISO BMFF) C2PA support — IMPLEMENTED
 
-Status: **not implemented.** Unlike WAV and MP3 (which use a byte-range
-`c2pa.hash.data` hard binding), M4A/MP4 uses **`c2pa.hash.bmff.v3`** — a
-different, canonical box-tree hashing algorithm. This is NOT a container swap.
+M4A/MP4 sign + verify is implemented and fully interoperable with c2pa-rs
+(both directions). Unlike WAV/MP3 (byte-range `c2pa.hash.data`), M4A uses
+`c2pa.hash.bmff.v3`.
 
-## Container layout (from a c2pa-rs-signed reference)
-
-Top-level ISO BMFF boxes in a signed M4A:
+## Container layout (signed)
 
 ```
-ftyp   (28)
-uuid   (C2PA)   uuid = d8fec3d61b0e483c92975828877ec481
-free   (8)
-mdat   (audio)
-moov   (815)
+ftyp
+uuid   (C2PA, uuid = d8fec3d61b0e483c92975828877ec481)   <- inserted after ftyp
+free
+mdat
+moov
 ```
 
-The C2PA `uuid` box sits right after `ftyp`. Its payload (after the 16-byte
-uuid) is:
+The C2PA `uuid` box payload (after the 16-byte uuid):
+`00000000` (reserved) + `"manifest\0"` (9) + 8-byte merkle offset (0) + JUMBF store.
 
-```
-00 00 00 00                      reserved (4)
-"manifest\0"                     purpose string (9)
-00 00 00 00 00 00 00 00          merkle offset = 0 (8, "manifest" purpose)
-<JUMBF manifest store>           the same store bytes as WAV/MP3
-```
+## The BmffHash v3 algorithm (the key)
 
-## The hard binding: c2pa.hash.bmff.v3 (the hard part)
+`hash = SHA-256( for each NON-excluded top-level box, in file order:
+BE64(box_file_offset) ++ box_bytes )`.
 
-The `c2pa.hash.bmff.v3` assertion uses **box-path exclusions**, not byte ranges:
+Excluded boxes: the C2PA `/uuid` box (matched by the uuid value at offset 8),
+plus `/ftyp`, `/free`, `/mfra`, `/skip`. Derived from the c2pa-rs source
+(`bmff_to_jumbf_exclusions` + `hash_stream_by_alg`'s `bmff_offset` handling:
+each included top-level box contributes its 8-byte BE offset before its bytes)
+and verified byte-exact against a c2pa-rs reference.
 
-```
-exclusions:
-  - xpath: /uuid   data: [{offset: 8, value: <C2PA uuid 16 bytes>}]  (exclude only the c2pa box)
-  - xpath: /ftyp
-  - xpath: /mfra
-  - xpath: /free
-  - xpath: /skip
-```
+## Signing
 
-The stored `hash` could NOT be reproduced by any simple byte-range approach
-(tried: mdat+moov, ftyp+mdat+moov, all-but-uuid, mdat-only, moov-only,
-ftyp+moov — none matched). So BmffHash v3 is a **canonical** algorithm that
-walks the box map and processes boxes in a specific way (likely hashing box
-headers/content per a defined procedure, with nested-exclusion handling), not
-`sha256(file minus excluded byte ranges)`.
+1. Insert the `uuid` box (manifest prefix + store) right after `ftyp`.
+2. Adjust `stco`/`co64` chunk offsets by +uuid_box_size (mdat shifted).
+3. Compute the bmff.v3 hash over the final layout; embed a c2pa.hash.bmff.v3
+   assertion (exclusions `/uuid` [data-matched] `/ftyp` `/mfra` `/free` `/skip`).
+   Store size is fixed, so no fixed-point iteration is needed.
 
-## To implement (a focused task)
-
-1. Read the c2pa-rs `BmffHash` implementation (`sdk/src/asset_handlers/bmff_io.rs`
-   + the bmff hash assertion) to get the exact box-map construction and the
-   canonical hashing procedure for v3.
-2. Also handle: writing the `uuid` box with the `manifest` prefix at the right
-   position (after ftyp), and rewriting `moov` chunk offsets (stco/co64) since
-   inserting the uuid box shifts `mdat`.
-3. Validate against `ref.m4a` (their signer → our verifier) AND our output in
-   the c2pa-rs reader (our signer → their verifier), like WAV/MP3.
-4. Cover fragmented MP4 (Merkle) only if needed.
-
-Until then, M4A signing should use c2pa-rs (CrispASR links it optionally).
+Implemented in `src/c2pa_native.cpp` (`sign_m4a` / verify) and `js/c2pa.mjs`
+(`c2paSignM4a`) + `js/c2pa-verify.mjs`. Fragmented MP4 (Merkle) is out of scope.

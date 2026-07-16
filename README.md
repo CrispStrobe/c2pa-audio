@@ -29,8 +29,8 @@ code at all.
 | **sign: our C++**   | ✅              | ✅             | ✅              |
 | **sign: our wasm**  | ✅              | ✅             | ✅              |
 
-Every signer's output validates in every verifier, including the c2pa-rs
-reference reader; tampering the audio breaks the hard-binding hash, and a
+Every signer's output validates in every verifier for **WAV, MP3, and M4A**,
+including the c2pa-rs reference reader; tampering the audio breaks the hard-binding hash, and a
 mangled signature fails COSE verification.
 
 ## Languages
