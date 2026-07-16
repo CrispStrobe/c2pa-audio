@@ -1,7 +1,7 @@
 ## 0.2.0
 
-- M4A/MP4 (ISO BMFF, c2pa.hash.bmff.v3) sign + verify, interoperable with c2pa-rs.
-- `signM4a` convenience; `verify` auto-detects WAV/MP3/M4A.
+- M4A/MP4 (ISO BMFF, c2pa.hash.bmff.v3) and FLAC (ID3v2 GEOB) sign + verify, interoperable with c2pa-rs.
+- `signM4a` / `signFlac` conveniences; `verify` auto-detects WAV/MP3/M4A/FLAC.
 
 ## 0.1.0
 

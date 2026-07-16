@@ -30,7 +30,7 @@ void main() {
 
   final Uint8List wav = /* your WAV bytes */ Uint8List(0);
   final signed = c2pa.signWav(wav);           // bundled self-signed default cert
-  // or: c2pa.signMp3(mp3) / c2pa.signM4a(m4a) / c2pa.sign(bytes, mime: 'audio/mp4')
+  // or: c2pa.signMp3(mp3) / c2pa.signM4a(m4a) / c2pa.signFlac(flac)
 
   final r = c2pa.verify(signed);               // auto-detects WAV/MP3
   print('valid: ${r.valid}');                  // signature + hash bindings OK
