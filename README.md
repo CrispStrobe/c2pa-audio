@@ -50,6 +50,13 @@ mangled signature fails COSE verification.
 The JS variant is special: `js/c2pa.mjs` + `js/c2pa-verify.mjs` are **pure
 WebCrypto** and need no native library — ideal for browsers and Workers.
 
+## Demo
+
+`demo/index.html` is a self-contained, dependency-free page that signs, inspects,
+verifies, and tamper-tests audio entirely in the browser using the pure-JS
+library. Open the file directly, or regenerate it from source with
+`node demo/build.mjs`. See `demo/README.md`.
+
 ## Build
 
 ```bash
