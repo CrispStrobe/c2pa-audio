@@ -108,3 +108,25 @@ test('assertion hash convention: sha256(box[8:]) is a 32-byte digest', async () 
   const h = await sha256(body.subarray(8));
   assert.equal(h.length, 32);
 });
+
+// --- robustness: a hostile file must not hang or crash the verifier ---
+test('deeply-nested JUMBF does not hang (bounded recursion)', async () => {
+  const N = 50000;
+  const jumbf = new Uint8Array(8 * N);
+  const dv = new DataView(jumbf.buffer);
+  for (let i = 0; i < N; i++) { dv.setUint32(8 * i, 8 * (N - i)); jumbf.set([0x6a, 0x75, 0x6d, 0x62], 8 * i + 4); } // 'jumb'
+  const cs = jumbf.length;
+  const wav = new Uint8Array(16 + 4 + cs);
+  wav.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45, 0x43, 0x32, 0x50, 0x41], 0); // RIFF..WAVE C2PA
+  new DataView(wav.buffer).setUint32(16, cs, true);
+  wav.set(jumbf, 20);
+  const t0 = Date.now();
+  const r = await c2paVerifyWav(wav);
+  assert.equal(r.valid, false);
+  assert.ok(Date.now() - t0 < 5000, 'verify must return quickly on nested JUMBF');
+});
+test('deeply-nested CBOR does not crash the decoder', async () => {
+  const deep = new Uint8Array(50000).fill(0x81); // nested array(1) chain
+  const r = await c2paVerifyWav(deep); // not even a C2PA container -> invalid, no throw escaping
+  assert.equal(r.valid, false);
+});

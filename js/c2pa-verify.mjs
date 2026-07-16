@@ -33,16 +33,19 @@ function cborDecode(bytes) {
     else len = ai; // 31 = indefinite (unused here)
     return { major, ai, len };
   }
-  function value() {
+  function value(depth = 0) {
+    if (depth > 64 || pos >= bytes.length) throw new Error('cbor: nesting/truncation');
     const h = head();
     switch (h.major) {
       case 0: return h.len;                 // uint
       case 1: return -1 - h.len;            // negative
       case 2: { const b = bytes.slice(pos, pos + h.len); pos += h.len; return b; } // bstr
       case 3: { const b = bytes.slice(pos, pos + h.len); pos += h.len; return td.decode(b); } // tstr
-      case 4: { const a = []; for (let i = 0; i < h.len; i++) a.push(value()); return a; }     // array
-      case 5: { const m = new Map(); for (let i = 0; i < h.len; i++) { const k = value(); m.set(typeof k === 'string' || typeof k === 'number' ? k : JSON.stringify(k), value()); } return m; } // map
-      case 6: return { __tag: h.len, value: value() };  // tag
+      // array/map: each element is >=1 byte, so a length exceeding what remains
+      // is invalid — stop early rather than loop on a bogus huge length.
+      case 4: { const a = []; for (let i = 0; i < h.len && pos < bytes.length; i++) a.push(value(depth + 1)); return a; }
+      case 5: { const m = new Map(); for (let i = 0; i < h.len && pos < bytes.length; i++) { const k = value(depth + 1); m.set(typeof k === 'string' || typeof k === 'number' ? k : JSON.stringify(k), value(depth + 1)); } return m; }
+      case 6: return { __tag: h.len, value: value(depth + 1) };  // tag
       case 7:
         if (h.ai === 20) return false;
         if (h.ai === 21) return true;
@@ -119,7 +122,11 @@ function rd32be(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8
 // Walk the JUMBF tree; collect { label -> {box, contentCbor} }.
 function walkJumbf(body) {
   const boxes = {};
-  function walk(b) {
+  let count = 0;
+  // Bound recursion depth + box count: real manifests nest ~5 deep with a
+  // handful of boxes, but a hostile file must not blow the stack or wedge us.
+  function walk(b, depth) {
+    if (depth > 32 || count > 4096) return;
     let o = 0;
     while (o + 8 <= b.length) {
       const sz = rd32be(b, o);
@@ -129,8 +136,9 @@ function walkJumbf(body) {
         const payload = b.subarray(o + 8, o + sz);
         const jsz = rd32be(payload, 0);
         const lblStart = 8 + 16 + 1; // jumd hdr + type uuid + toggles
-        let e = lblStart; while (e < jsz && payload[e] !== 0) e++;
-        const label = String.fromCharCode(...payload.subarray(lblStart, e));
+        const lblEnd = Math.min(jsz, payload.length); // bound by BOTH
+        let e = lblStart; while (e < lblEnd && payload[e] !== 0) e++;
+        const label = e > lblStart ? String.fromCharCode(...payload.subarray(lblStart, e)) : '';
         // find a cbor content box (first level under the jumd)
         let content = null, po = jsz;
         while (po + 8 <= payload.length) {
@@ -141,12 +149,13 @@ function walkJumbf(body) {
           po += psz;
         }
         boxes[label] = { box: b.subarray(o, o + sz), content };
-        walk(payload);
+        if (++count > 4096) return;
+        walk(payload, depth + 1);
       }
       o += sz;
     }
   }
-  walk(body);
+  walk(body, 0);
   return boxes;
 }
 

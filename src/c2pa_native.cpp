@@ -777,9 +777,9 @@ struct CborReader {
             v = (v << 8) | p[pos++];
         return v;
     }
-    Value value() {
+    Value value(int depth = 0) {
         Value out;
-        if (pos >= n) {
+        if (pos >= n || depth > 64) { // bound nesting: a hostile CBOR must not blow the stack
             ok = false;
             return out;
         }
@@ -818,20 +818,20 @@ struct CborReader {
         case 4:
             out.type = Value::ARRAY;
             for (uint64_t k = 0; k < len && ok; k++)
-                out.arr.push_back(value());
+                out.arr.push_back(value(depth + 1));
             break;
         case 5:
             out.type = Value::MAP;
             for (uint64_t k = 0; k < len && ok; k++) {
-                Value key = value();
-                Value val = value();
+                Value key = value(depth + 1);
+                Value val = value(depth + 1);
                 out.map.emplace_back(std::move(key), std::move(val));
             }
             break;
         case 6:
             out.type = Value::TAG;
             out.tag = len;
-            out.arr.push_back(value());
+            out.arr.push_back(value(depth + 1));
             break;
         case 7:
             if (ai == 20) {
@@ -865,7 +865,12 @@ struct JumbfBox {
 uint32_t rd32be(const uint8_t* b) {
     return (uint32_t(b[0]) << 24) | (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
 }
-void jumbf_walk(const uint8_t* b, size_t len, std::vector<std::pair<std::string, JumbfBox>>& out) {
+// Real C2PA manifests nest ~5 deep and hold a handful of boxes; these caps stop
+// a hostile file (deep nesting / huge box count) from stack-overflowing or
+// wedging the parser in O(n^2) copies. depth/count are bounded defensively.
+void jumbf_walk(const uint8_t* b, size_t len, std::vector<std::pair<std::string, JumbfBox>>& out, int depth = 0) {
+    if (depth > 32 || out.size() > 4096)
+        return;
     size_t o = 0;
     while (o + 8 <= len) {
         uint32_t sz = rd32be(b + o);
@@ -875,11 +880,16 @@ void jumbf_walk(const uint8_t* b, size_t len, std::vector<std::pair<std::string,
             const uint8_t* payload = b + o + 8;
             size_t plen = sz - 8;
             uint32_t jsz = rd32be(payload);
-            size_t lblStart = 8 + 16 + 1;
-            size_t e = lblStart;
-            while (e < jsz && payload[e] != 0)
-                e++;
-            std::string label(reinterpret_cast<const char*>(payload + lblStart), e - lblStart);
+            const size_t lblStart = 8 + 16 + 1;
+            // scan the label bounded by BOTH the jumd size and the payload length
+            std::string label;
+            if (lblStart <= plen) {
+                size_t lblEnd = plen < jsz ? plen : jsz;
+                size_t e = lblStart;
+                while (e < lblEnd && payload[e] != 0)
+                    e++;
+                label.assign(reinterpret_cast<const char*>(payload + lblStart), e - lblStart);
+            }
             JumbfBox jb;
             jb.box.assign(b + o, b + o + sz);
             size_t po = jsz;
@@ -894,7 +904,9 @@ void jumbf_walk(const uint8_t* b, size_t len, std::vector<std::pair<std::string,
                 po += psz;
             }
             out.emplace_back(label, std::move(jb));
-            jumbf_walk(payload, plen, out);
+            if (out.size() > 4096)
+                return;
+            jumbf_walk(payload, plen, out, depth + 1);
         }
         o += sz;
     }

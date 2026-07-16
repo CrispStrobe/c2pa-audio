@@ -152,6 +152,23 @@ int main(void) {
         /* verify a non-C2PA WAV -> 0 flags */
         if (c2pa_audio_verify(wav, wav_len) != 0) { printf("FAIL: non-C2PA verify should be 0\n"); failures++; }
         else { printf("ok: non-C2PA input verifies as 0\n"); }
+
+        /* robustness: a deeply-nested JUMBF (hostile) must not hang/crash */
+        {
+            unsigned N = 50000, cs = 8 * N;
+            unsigned char* w = (unsigned char*)malloc(20 + cs);
+            memcpy(w, "RIFF\0\0\0\0WAVEC2PA", 16);
+            memcpy(w + 16, &cs, 4); /* little-endian chunk size */
+            for (unsigned i = 0; i < N; i++) {
+                unsigned sz = 8 * (N - i), o = 20 + 8 * i;
+                w[o] = sz >> 24; w[o + 1] = sz >> 16; w[o + 2] = sz >> 8; w[o + 3] = sz;
+                memcpy(w + o + 4, "jumb", 4);
+            }
+            int f = c2pa_audio_verify(w, 20 + cs); /* returns fast (depth-capped), not valid */
+            if (f & C2PA_AUDIO_VALID) { printf("FAIL: nested JUMBF should not be valid\n"); failures++; }
+            else { printf("ok: deeply-nested JUMBF handled (no hang/crash)\n"); }
+            free(w);
+        }
     }
 
     c2pa_audio_free(signed_);
