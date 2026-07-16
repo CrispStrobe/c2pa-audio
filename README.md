@@ -29,7 +29,7 @@ code at all.
 | **sign: our C++**   | ✅              | ✅             | ✅              |
 | **sign: our wasm**  | ✅              | ✅             | ✅              |
 
-Every signer's output validates in every verifier for **WAV, MP3, and M4A**,
+Every signer's output validates in every verifier for **WAV, MP3, M4A, and FLAC**,
 including the c2pa-rs reference reader; tampering the audio breaks the hard-binding hash, and a
 mangled signature fails COSE verification.
 
@@ -93,9 +93,9 @@ final r = c2pa.verify(signed);               // r.valid == true
 
 ## Scope
 
-**WAV** (RIFF `C2PA` chunk), **MP3** (ID3v2.4 GEOB frame), and **M4A/MP4**
-(ISO BMFF `uuid` box + `c2pa.hash.bmff.v3`), sign + verify — all fully
-interoperable with c2pa-rs. Trust-anchor evaluation is out of scope (a
+**WAV** (RIFF `C2PA` chunk), **MP3** (ID3v2.4 GEOB frame), **M4A/MP4**
+(ISO BMFF `uuid` box + `c2pa.hash.bmff.v3`), and **FLAC** (ID3v2 GEOB prepend,
+like c2pa-rs), sign + verify — all fully interoperable with c2pa-rs. Trust-anchor evaluation is out of scope (a
 self-signed cert verifies cryptographically but is "untrusted" to a full
 validator).
 
@@ -105,7 +105,7 @@ of the box (pass `audio/mp4`). Only the *raw streaming* containers — ADTS AAC
 does c2pa-rs (it refuses `audio/aac` / `audio/ogg`). Remux those into MP4 to
 sign them.
 
-Signing API takes a MIME type: `"audio/wav"`, `"audio/mpeg"`, or `"audio/mp4"`.
+Signing API takes a MIME type: `"audio/wav"`, `"audio/mpeg"`, `"audio/mp4"`, or `"audio/flac"`.
 Verification auto-detects the container (RIFF / ID3 / ISO-BMFF).
 
 ## Licensing

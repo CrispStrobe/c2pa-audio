@@ -186,6 +186,11 @@ export async function c2paSignWav(wavBytes, certPem, keyPem, opts = {}) {
 
 // Sign an MP3 (manifest store in an ID3v2.4 GEOB frame). Preserves existing
 // ID3v2.4 frames. The data-hash exclusion covers exactly the GEOB object.
+// Sign a FLAC — same ID3v2 GEOB container mechanism as MP3 (c2pa-rs does this too).
+export async function c2paSignFlac(flacBytes, certPem, keyPem, opts = {}) {
+  if (flacBytes.length < 4 || flacBytes[0] !== 0x66 || flacBytes[1] !== 0x4c || flacBytes[2] !== 0x61 || flacBytes[3] !== 0x43) throw new Error("not a FLAC file");
+  return c2paSignMp3(flacBytes, certPem, keyPem, opts);
+}
 export async function c2paSignMp3(mp3Bytes, certPem, keyPem, opts = {}) {
   const builder = await makeManifestBuilder(certPem, keyPem, opts);
   const synchsafe = (b, o) => (b[o] << 21) | (b[o + 1] << 14) | (b[o + 2] << 7) | b[o + 3];

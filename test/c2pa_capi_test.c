@@ -97,11 +97,12 @@ int main(void) {
         size_t rlen;
 
         /* verify c2pa-rs reference vectors (their signer -> our verifier) */
-        const char* refs[3];
+        const char* refs[4];
         refs[0] = "reference-c2pa-rs.wav";
         refs[1] = "reference-c2pa-rs.mp3";
         refs[2] = "reference-c2pa-rs.m4a";
-        for (int i = 0; i < 3; i++) {
+        refs[3] = "reference-c2pa-rs.flac";
+        for (int i = 0; i < 4; i++) {
             snprintf(path, sizeof(path), "%s/%s", C2PA_AUDIO_TEST_ASSETS, refs[i]);
             unsigned char* ref = read_file(path, &rlen);
             if (!ref) { printf("warn: reference vector missing (%s)\n", path); continue; }
@@ -112,10 +113,11 @@ int main(void) {
         }
 
         /* MP3 + M4A round-trips: sign an unsigned sample, then verify */
-        struct { const char* file; const char* mime; } samples[2];
+        struct { const char* file; const char* mime; } samples[3];
         samples[0].file = "sample.mp3"; samples[0].mime = "audio/mpeg";
         samples[1].file = "sample.m4a"; samples[1].mime = "audio/mp4";
-        for (int i = 0; i < 2; i++) {
+        samples[2].file = "sample.flac"; samples[2].mime = "audio/flac";
+        for (int i = 0; i < 3; i++) {
             snprintf(path, sizeof(path), "%s/%s", C2PA_AUDIO_TEST_ASSETS, samples[i].file);
             unsigned char* raw = read_file(path, &rlen);
             if (!raw) continue;

@@ -119,6 +119,10 @@ class C2paAudio {
   Uint8List signM4a(Uint8List m4a, {String? certPem, String? keyPem}) =>
       sign(m4a, mime: 'audio/mp4', certPem: certPem, keyPem: keyPem);
 
+  /// Convenience: sign a FLAC.
+  Uint8List signFlac(Uint8List flac, {String? certPem, String? keyPem}) =>
+      sign(flac, mime: 'audio/flac', certPem: certPem, keyPem: keyPem);
+
   /// Verify a signed audio file (WAV / MP3 / M4A, auto-detected). Never throws.
   VerifyResult verify(Uint8List data) {
     final dataPtr = malloc<Uint8>(data.length);

@@ -722,6 +722,15 @@ Bytes sign_m4a(const Bytes& m4a, const std::string& cert_pem, const std::string&
     return build_file(a4.store);
 }
 
+// FLAC uses the exact same container mechanism as MP3 (an ID3v2.4 GEOB manifest
+// tag prepended, the fLaC audio preserved after it) — this is what c2pa-rs does
+// too. The signer/verifier are byte-identical to the MP3 path.
+Bytes sign_flac(const Bytes& flac, const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
+    if (flac.size() < 4 || std::memcmp(flac.data(), "fLaC", 4) != 0)
+        return {};
+    return sign_mp3(flac, cert_pem, key_pem, opts);
+}
+
 // ============================================================================
 // Verifier — the native twin of bindings/javascript/c2pa-verify.mjs.
 // ============================================================================

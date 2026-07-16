@@ -44,6 +44,12 @@ Bytes sign_mp3(const Bytes& mp3, const std::string& cert_pem, const std::string&
 Bytes sign_m4a(const Bytes& m4a, const std::string& cert_pem, const std::string& key_pem,
                const SignOptions& opts = SignOptions());
 
+// Sign a FLAC by prepending an ID3v2.4 GEOB manifest tag — the same container
+// mechanism c2pa-rs uses for FLAC (identical to the MP3 path; the fLaC audio is
+// preserved untouched after the tag). Returns the signed file or empty.
+Bytes sign_flac(const Bytes& flac, const std::string& cert_pem, const std::string& key_pem,
+                const SignOptions& opts = SignOptions());
+
 // Result of verifying a signed WAV's C2PA manifest.
 struct VerifyResult {
     bool valid = false;            // signature + data hash + assertions all OK

@@ -78,6 +78,9 @@ class C2paAudio:
     def sign_m4a(self, m4a: bytes, cert_pem=None, key_pem=None) -> bytes:
         return self.sign(m4a, "audio/mp4", cert_pem, key_pem)
 
+    def sign_flac(self, flac: bytes, cert_pem=None, key_pem=None) -> bytes:
+        return self.sign(flac, "audio/flac", cert_pem, key_pem)
+
     def verify(self, data: bytes) -> VerifyResult:
         f = self._lib.c2pa_audio_verify(data, len(data))
         return VerifyResult(bool(f & SIG_VALID), bool(f & DATA_VALID), bool(f & ASSERT_VALID), bool(f & VALID))
