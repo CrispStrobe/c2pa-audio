@@ -1,6 +1,6 @@
 # c2pa-audio
 
-**Native C2PA (Content Credentials) signing & verification for WAV, MP3 + M4A audio — no c2pa-rs, no Rust, no OpenSSL.**
+**Native C2PA (Content Credentials) signing & verification for WAV, MP3, M4A + FLAC audio — no c2pa-rs, no Rust, no OpenSSL.**
 
 A tiny (~160 KB), dependency-light implementation of the [C2PA](https://c2pa.org)
 manifest format: canonical CBOR, JUMBF boxes, COSE_Sign1, and **ES256**
