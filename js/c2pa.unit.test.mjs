@@ -130,3 +130,14 @@ test('deeply-nested CBOR does not crash the decoder', async () => {
   const r = await c2paVerifyWav(deep); // not even a C2PA container -> invalid, no throw escaping
   assert.equal(r.valid, false);
 });
+test('runt JUMBF boxes (size 8..11) do not read out of bounds', async () => {
+  for (let bs = 8; bs <= 11; bs++) {
+    const w = new Uint8Array(20 + bs);
+    w.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45, 0x43, 0x32, 0x50, 0x41], 0);
+    new DataView(w.buffer).setUint32(16, bs, true);            // chunk size (LE)
+    new DataView(w.buffer).setUint32(20, bs, false);           // box size (BE)
+    w.set([0x6a, 0x75, 0x6d, 0x62], 24);                       // 'jumb'
+    const r = await c2paVerifyWav(w);                          // must not throw/OOB
+    assert.equal(r.valid, false);
+  }
+});

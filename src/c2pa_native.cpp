@@ -879,7 +879,9 @@ void jumbf_walk(const uint8_t* b, size_t len, std::vector<std::pair<std::string,
         if (std::memcmp(b + o + 4, "jumb", 4) == 0) {
             const uint8_t* payload = b + o + 8;
             size_t plen = sz - 8;
-            uint32_t jsz = rd32be(payload);
+            // a valid jumb holds a jumd box (>= 4 bytes for its size field); a
+            // runt box (size 8..11) has too little payload to read jsz safely.
+            uint32_t jsz = plen >= 4 ? rd32be(payload) : 0;
             const size_t lblStart = 8 + 16 + 1;
             // scan the label bounded by BOTH the jumd size and the payload length
             std::string label;

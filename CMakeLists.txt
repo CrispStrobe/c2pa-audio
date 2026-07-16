@@ -38,6 +38,21 @@ if (C2PA_AUDIO_BUILD_TESTS)
     add_test(NAME c2pa_capi_test COMMAND c2pa_capi_test)
 endif()
 
+# Opt-in mutation fuzzer for the verifier (untrusted-input parser). Builds the
+# core + fuzz harness with AddressSanitizer + UndefinedBehaviorSanitizer.
+#   cmake -B build-fuzz -DC2PA_AUDIO_FUZZ=ON && cmake --build build-fuzz
+#   ./build-fuzz/c2pa_fuzz_verify 200000 test/assets/reference-c2pa-rs.*
+option(C2PA_AUDIO_FUZZ "Build the ASan/UBSan verifier fuzzer" OFF)
+if (C2PA_AUDIO_FUZZ)
+    add_executable(c2pa_fuzz_verify test/fuzz_verify.cpp src/c2pa_native.cpp third_party/uecc/uECC.c)
+    target_include_directories(c2pa_fuzz_verify PRIVATE src third_party/uecc)
+    target_compile_options(c2pa_fuzz_verify PRIVATE -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(c2pa_fuzz_verify PRIVATE -fsanitize=address,undefined)
+    if (NOT MSVC)
+        set_source_files_properties(third_party/uecc/uECC.c PROPERTIES COMPILE_OPTIONS "-w")
+    endif()
+endif()
+
 install(TARGETS c2pa_audio c2pa_audio_static
         LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)
 install(FILES include/c2pa_audio.h DESTINATION include)

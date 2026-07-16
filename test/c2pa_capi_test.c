@@ -169,6 +169,17 @@ int main(void) {
             else { printf("ok: deeply-nested JUMBF handled (no hang/crash)\n"); }
             free(w);
         }
+
+        /* runt 'jumb' boxes (size 8..11, payload < 4) must not read OOB */
+        for (unsigned bs = 8; bs <= 11; bs++) {
+            unsigned char w2[64];
+            memcpy(w2, "RIFF\0\0\0\0WAVEC2PA", 16);
+            memcpy(w2 + 16, &bs, 4);
+            w2[20] = bs >> 24; w2[21] = bs >> 16; w2[22] = bs >> 8; w2[23] = bs; /* box size (BE) */
+            memcpy(w2 + 24, "jumb", 4);
+            (void)c2pa_audio_verify(w2, 20 + bs); /* must not crash / read OOB */
+        }
+        printf("ok: runt JUMBF boxes handled (no OOB read)\n");
     }
 
     c2pa_audio_free(signed_);
