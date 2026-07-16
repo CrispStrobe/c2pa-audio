@@ -136,6 +136,24 @@ int main(void) {
     }
 #endif
 
+    /* negative cases */
+    {
+        unsigned char* out = NULL;
+        size_t olen = 0;
+        /* unsupported mime -> nonzero, *out untouched */
+        if (c2pa_audio_sign(wav, wav_len, "audio/ogg", NULL, NULL, &out, &olen) == 0 || out != NULL) {
+            printf("FAIL: unsupported mime should error\n"); failures++;
+        } else { printf("ok: unsupported mime rejected\n"); }
+        /* empty input -> nonzero */
+        unsigned char dummy = 0;
+        if (c2pa_audio_sign(&dummy, 0, "audio/wav", NULL, NULL, &out, &olen) == 0) {
+            printf("FAIL: empty input should error\n"); failures++; if (out) c2pa_audio_free(out);
+        } else { printf("ok: empty input rejected\n"); }
+        /* verify a non-C2PA WAV -> 0 flags */
+        if (c2pa_audio_verify(wav, wav_len) != 0) { printf("FAIL: non-C2PA verify should be 0\n"); failures++; }
+        else { printf("ok: non-C2PA input verifies as 0\n"); }
+    }
+
     c2pa_audio_free(signed_);
     free(wav);
     printf(failures ? "FAILED (%d)\n" : "PASSED\n", failures);

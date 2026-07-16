@@ -2,6 +2,9 @@
 
 **Native C2PA (Content Credentials) signing & verification for WAV, MP3, M4A + FLAC audio — no c2pa-rs, no Rust, no OpenSSL.**
 
+[![CI](https://github.com/CrispStrobe/c2pa-audio/actions/workflows/ci.yml/badge.svg)](https://github.com/CrispStrobe/c2pa-audio/actions/workflows/ci.yml)
+
+
 A tiny (~160 KB), dependency-light implementation of the [C2PA](https://c2pa.org)
 manifest format: canonical CBOR, JUMBF boxes, COSE_Sign1, and **ES256**
 (ECDSA P-256 + SHA-256, via the vendored [micro-ecc](https://github.com/kmackay/micro-ecc)).
