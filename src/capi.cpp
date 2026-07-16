@@ -9,20 +9,28 @@
 #include "default_cert.h"
 
 using crispasr::c2pa_native::Bytes;
+using crispasr::c2pa_native::sign_mp3;
 using crispasr::c2pa_native::sign_wav;
 using crispasr::c2pa_native::verify_wav;
 using crispasr::c2pa_native::VerifyResult;
 
-extern "C" int c2pa_audio_sign_wav(const unsigned char* wav, size_t wav_len, const char* cert_pem,
-                                      const char* key_pem, unsigned char** out, size_t* out_len) {
-    if (!wav || !out || !out_len)
+extern "C" int c2pa_audio_sign(const unsigned char* in, size_t in_len, const char* mime, const char* cert_pem,
+                               const char* key_pem, unsigned char** out, size_t* out_len) {
+    if (!in || !out || !out_len)
         return 1;
     *out = nullptr;
     *out_len = 0;
     std::string cert = cert_pem ? std::string(cert_pem) : std::string(c2pa_audio_default_cert_pem());
     std::string key = key_pem ? std::string(key_pem) : std::string(c2pa_audio_default_key_pem());
-    Bytes in(wav, wav + wav_len);
-    Bytes signed_ = sign_wav(in, cert, key);
+    Bytes data(in, in + in_len);
+    std::string fmt = mime ? std::string(mime) : std::string("audio/wav");
+    Bytes signed_;
+    if (fmt == "audio/mpeg" || fmt == "audio/mp3")
+        signed_ = sign_mp3(data, cert, key);
+    else if (fmt == "audio/wav" || fmt == "audio/x-wav" || fmt == "audio/wave")
+        signed_ = sign_wav(data, cert, key);
+    else
+        return 4; // unsupported container
     if (signed_.empty())
         return 2;
     unsigned char* buf = static_cast<unsigned char*>(std::malloc(signed_.size()));
@@ -34,11 +42,11 @@ extern "C" int c2pa_audio_sign_wav(const unsigned char* wav, size_t wav_len, con
     return 0;
 }
 
-extern "C" int c2pa_audio_verify_wav(const unsigned char* wav, size_t wav_len) {
-    if (!wav)
+extern "C" int c2pa_audio_verify(const unsigned char* in, size_t in_len) {
+    if (!in)
         return 0;
-    Bytes in(wav, wav + wav_len);
-    VerifyResult r = verify_wav(in);
+    Bytes data(in, in + in_len);
+    VerifyResult r = verify_wav(data); // auto-detects WAV/MP3
     int flags = 0;
     if (r.signature_valid)
         flags |= C2PA_AUDIO_SIG_VALID;

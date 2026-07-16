@@ -11,15 +11,25 @@ print("version:", c.version)
 wav=make_wav()
 signed=c.sign_wav(wav)
 assert len(signed)>len(wav), "sign failed"
-r=c.verify_wav(signed)
+r=c.verify(signed)
 assert r.valid and r.signature_valid and r.data_hash_valid and r.assertions_valid, f"round-trip: {r}"
 print("ok: round-trip", r)
 t=bytearray(signed); t[46]^=0xff
-assert not c.verify_wav(bytes(t)).valid, "tamper not detected"
+assert not c.verify(bytes(t)).valid, "tamper not detected"
 print("ok: tamper rejected")
 ref=os.path.join(os.path.dirname(__file__),'..','..','test','assets','reference-c2pa-rs.wav')
 if os.path.exists(ref):
-    rr=c.verify_wav(open(ref,'rb').read())
+    rr=c.verify(open(ref,'rb').read())
     assert rr.valid, f"c2pa-rs ref: {rr}"
     print("ok: c2pa-rs reference vector VALID")
+import glob
+mp3s=[p for p in [os.path.join(os.path.dirname(__file__),"..","..","test","assets","sample.mp3")] if os.path.exists(p)]
+if mp3s:
+    sm=c.sign(open(mp3s[0],"rb").read(),"audio/mpeg")
+    assert c.verify(sm).valid, "MP3 round-trip"
+    print("ok: MP3 round-trip VALID")
+rm=os.path.join(os.path.dirname(__file__),"..","..","test","assets","reference-c2pa-rs.mp3")
+if os.path.exists(rm):
+    assert c.verify(open(rm,"rb").read()).valid, "c2pa-rs MP3 ref"
+    print("ok: c2pa-rs MP3 reference VALID")
 print("PASSED")

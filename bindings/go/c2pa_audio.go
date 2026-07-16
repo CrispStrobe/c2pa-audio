@@ -31,12 +31,17 @@ func Version() string {
 	return C.GoString(C.c2pa_audio_version())
 }
 
-// SignWav signs wav with a C2PA manifest. Pass empty certPem/keyPem to use the
-// bundled self-signed default cert. Returns the signed WAV.
-func SignWav(wav []byte, certPem, keyPem string) ([]byte, error) {
-	if len(wav) == 0 {
-		return nil, fmt.Errorf("empty wav")
+// Sign signs data with a C2PA manifest. mime is "audio/wav" or "audio/mpeg".
+// Pass empty certPem/keyPem to use the bundled self-signed default cert.
+func Sign(data []byte, mime, certPem, keyPem string) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty input")
 	}
+	if mime == "" {
+		mime = "audio/wav"
+	}
+	cMime := C.CString(mime)
+	defer C.free(unsafe.Pointer(cMime))
 	var out *C.uchar
 	var outLen C.size_t
 	var cCert, cKey *C.char
@@ -48,22 +53,30 @@ func SignWav(wav []byte, certPem, keyPem string) ([]byte, error) {
 		cKey = C.CString(keyPem)
 		defer C.free(unsafe.Pointer(cKey))
 	}
-	rc := C.c2pa_audio_sign_wav(
-		(*C.uchar)(unsafe.Pointer(&wav[0])), C.size_t(len(wav)),
-		cCert, cKey, &out, &outLen)
+	rc := C.c2pa_audio_sign(
+		(*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)),
+		cMime, cCert, cKey, &out, &outLen)
 	if rc != 0 {
-		return nil, fmt.Errorf("c2pa_audio_sign_wav failed (rc=%d)", int(rc))
+		return nil, fmt.Errorf("c2pa_audio_sign failed (rc=%d)", int(rc))
 	}
 	defer C.c2pa_audio_free(out)
 	return C.GoBytes(unsafe.Pointer(out), C.int(outLen)), nil
 }
 
-// VerifyWav verifies a signed WAV.
-func VerifyWav(wav []byte) VerifyResult {
-	if len(wav) == 0 {
+// SignWav / SignMp3 are convenience wrappers over Sign.
+func SignWav(wav []byte, certPem, keyPem string) ([]byte, error) {
+	return Sign(wav, "audio/wav", certPem, keyPem)
+}
+func SignMp3(mp3 []byte, certPem, keyPem string) ([]byte, error) {
+	return Sign(mp3, "audio/mpeg", certPem, keyPem)
+}
+
+// Verify verifies a signed audio file (WAV or MP3, auto-detected).
+func Verify(data []byte) VerifyResult {
+	if len(data) == 0 {
 		return VerifyResult{}
 	}
-	f := int(C.c2pa_audio_verify_wav((*C.uchar)(unsafe.Pointer(&wav[0])), C.size_t(len(wav))))
+	f := int(C.c2pa_audio_verify((*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data))))
 	return VerifyResult{
 		SignatureValid:  f&0x1 != 0,
 		DataHashValid:   f&0x2 != 0,

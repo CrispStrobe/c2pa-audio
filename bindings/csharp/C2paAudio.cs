@@ -31,12 +31,12 @@ namespace CrispAsr.C2pa
     {
         private const string Lib = "c2pa_audio"; // resolves to lib*.dylib/.so/.dll
 
-        [DllImport(Lib, EntryPoint = "c2pa_audio_sign_wav", CallingConvention = CallingConvention.Cdecl)]
-        private static extern int SignWavNative(byte[] wav, nuint wavLen, string? certPem, string? keyPem,
+        [DllImport(Lib, EntryPoint = "c2pa_audio_sign", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int SignNative(byte[] data, nuint dataLen, string mime, string? certPem, string? keyPem,
             out IntPtr outPtr, out nuint outLen);
 
-        [DllImport(Lib, EntryPoint = "c2pa_audio_verify_wav", CallingConvention = CallingConvention.Cdecl)]
-        private static extern int VerifyWavNative(byte[] wav, nuint wavLen);
+        [DllImport(Lib, EntryPoint = "c2pa_audio_verify", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int VerifyNative(byte[] data, nuint dataLen);
 
         [DllImport(Lib, EntryPoint = "c2pa_audio_free", CallingConvention = CallingConvention.Cdecl)]
         private static extern void FreeNative(IntPtr p);
@@ -46,11 +46,12 @@ namespace CrispAsr.C2pa
 
         public static string Version() => Marshal.PtrToStringAnsi(VersionNative()) ?? "";
 
-        /// <summary>Sign a WAV with a C2PA manifest. Null cert/key => bundled default cert.</summary>
-        public static byte[] Sign(byte[] wav, string? certPem = null, string? keyPem = null)
+        /// <summary>Sign audio with a C2PA manifest. mime = "audio/wav" or "audio/mpeg".
+        /// Null cert/key => bundled default cert.</summary>
+        public static byte[] Sign(byte[] data, string mime = "audio/wav", string? certPem = null, string? keyPem = null)
         {
-            int rc = SignWavNative(wav, (nuint)wav.Length, certPem, keyPem, out IntPtr outPtr, out nuint outLen);
-            if (rc != 0) throw new InvalidOperationException($"c2pa_audio_sign_wav failed (rc={rc})");
+            int rc = SignNative(data, (nuint)data.Length, mime, certPem, keyPem, out IntPtr outPtr, out nuint outLen);
+            if (rc != 0) throw new InvalidOperationException($"c2pa_audio_sign failed (rc={rc})");
             try
             {
                 var result = new byte[(int)outLen];
@@ -60,7 +61,7 @@ namespace CrispAsr.C2pa
             finally { FreeNative(outPtr); }
         }
 
-        /// <summary>Verify a signed WAV.</summary>
-        public static VerifyResult Verify(byte[] wav) => new VerifyResult(VerifyWavNative(wav, (nuint)wav.Length));
+        /// <summary>Verify a signed audio file (WAV or MP3, auto-detected).</summary>
+        public static VerifyResult Verify(byte[] data) => new VerifyResult(VerifyNative(data, (nuint)data.Length));
     }
 }

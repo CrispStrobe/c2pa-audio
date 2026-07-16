@@ -32,7 +32,7 @@ void main() {
   test('sign -> verify round-trip is valid', () {
     final signed = c2pa.signWav(makeWav());
     expect(signed.length, greaterThan(makeWav().length));
-    final r = c2pa.verifyWav(signed);
+    final r = c2pa.verify(signed);
     expect(r.valid, isTrue, reason: r.toString());
     expect(r.signatureValid, isTrue);
     expect(r.dataHashValid, isTrue);
@@ -42,13 +42,13 @@ void main() {
   test('tampering the audio fails verification', () {
     final signed = c2pa.signWav(makeWav());
     signed[46] ^= 0xff;
-    final r = c2pa.verifyWav(signed);
+    final r = c2pa.verify(signed);
     expect(r.valid, isFalse);
     expect(r.dataHashValid, isFalse);
   });
 
   test('non-C2PA WAV is not valid', () {
-    final r = c2pa.verifyWav(makeWav());
+    final r = c2pa.verify(makeWav());
     expect(r.valid, isFalse);
   });
 
@@ -61,7 +61,21 @@ void main() {
     ];
     final path = candidates.firstWhere((p) => File(p).existsSync(), orElse: () => '');
     if (path.isEmpty) return; // fixture optional
-    final r = c2pa.verifyWav(File(path).readAsBytesSync());
+    final r = c2pa.verify(File(path).readAsBytesSync());
+    expect(r.valid, isTrue, reason: r.toString());
+  });
+
+  test('MP3 round-trip (sign audio/mpeg -> verify)', () {
+    // locate an unsigned sample MP3 next to the fixtures
+    final candidates = [
+      'test/assets/sample.mp3',
+      '../../test/assets/sample.mp3',
+      if (libEnv != null) '${File(libEnv).parent.parent.path}/test/assets/sample.mp3',
+    ];
+    final path = candidates.firstWhere((p) => File(p).existsSync(), orElse: () => '');
+    if (path.isEmpty) return; // fixture optional
+    final signed = c2pa.signMp3(File(path).readAsBytesSync());
+    final r = c2pa.verify(signed);
     expect(r.valid, isTrue, reason: r.toString());
   });
 }

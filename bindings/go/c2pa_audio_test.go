@@ -27,7 +27,7 @@ func TestRoundTrip(t *testing.T) {
 	signed, err := SignWav(makeWav(), "", "")
 	if err != nil { t.Fatal(err) }
 	if len(signed) <= len(makeWav()) { t.Fatal("sign produced no manifest") }
-	r := VerifyWav(signed)
+	r := Verify(signed)
 	if !r.Valid || !r.SignatureValid || !r.DataHashValid || !r.AssertionsValid {
 		t.Fatalf("round-trip not valid: %+v", r)
 	}
@@ -36,12 +36,23 @@ func TestRoundTrip(t *testing.T) {
 func TestTamper(t *testing.T) {
 	signed, _ := SignWav(makeWav(), "", "")
 	signed[46] ^= 0xff
-	if VerifyWav(signed).Valid { t.Fatal("tamper not detected") }
+	if Verify(signed).Valid { t.Fatal("tamper not detected") }
 }
 
 func TestReferenceVector(t *testing.T) {
 	p := filepath.Join("..", "..", "test", "assets", "reference-c2pa-rs.wav")
 	data, err := os.ReadFile(p)
 	if err != nil { t.Skip("reference vector missing") }
-	if !VerifyWav(data).Valid { t.Fatal("c2pa-rs reference vector did not validate") }
+	if !Verify(data).Valid { t.Fatal("c2pa-rs reference vector did not validate") }
+}
+
+func TestMp3(t *testing.T) {
+	p := filepath.Join("..", "..", "test", "assets", "sample.mp3")
+	data, err := os.ReadFile(p)
+	if err != nil { t.Skip("sample.mp3 missing") }
+	signed, err := SignMp3(data, "", "")
+	if err != nil { t.Fatal(err) }
+	if !Verify(signed).Valid { t.Fatal("MP3 round-trip not valid") }
+	ref, err := os.ReadFile(filepath.Join("..", "..", "test", "assets", "reference-c2pa-rs.mp3"))
+	if err == nil && !Verify(ref).Valid { t.Fatal("c2pa-rs MP3 ref did not validate") }
 }

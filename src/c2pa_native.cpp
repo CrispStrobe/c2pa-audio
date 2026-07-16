@@ -269,66 +269,62 @@ inline uint32_t rd_u32le(const uint8_t* p) {
 // Sign a WAV container with a C2PA manifest. certPem/keyPem: PEM strings.
 // Returns the signed WAV, or an empty vector on any failure (caller keeps the
 // unsigned WAV — still watermarked / metadata-tagged upstream).
-Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
-    if (wav.size() < 12)
-        return {};
-    Bytes cert_der = pem_to_der(cert_pem, "CERTIFICATE");
-    if (cert_der.empty())
-        return {};
+namespace {
+
+// Container-agnostic C2PA manifest-store builder (JUMBF/CBOR/COSE/ES256). The
+// container adapters (WAV RIFF chunk, MP3 ID3v2 GEOB, ...) reuse this to build
+// the identical store; only the embedding + byte-range exclusion differ.
+struct ManifestSigner {
+    bool ok = false;
     uint8_t priv[32];
-    {
+    std::string manifest_urn, instance_id, gen_name, gen_version;
+    Bytes actions_box, actions_hash, protected_hdr;
+
+    struct Assembled {
+        Bytes store, hash_data_box;
+    };
+
+    static Bytes assertion_hash(const Bytes& b) {
+        auto h = sha::sha256(b.data() + 8, b.size() - 8);
+        return Bytes(h.begin(), h.end());
+    }
+
+    ManifestSigner(const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
+        Bytes cert_der = pem_to_der(cert_pem, "CERTIFICATE");
+        if (cert_der.empty())
+            return;
         Bytes key_der = pem_to_der(key_pem, "PRIVATE KEY");
         if (key_der.empty())
             key_der = pem_to_der(key_pem, "EC PRIVATE KEY");
         if (key_der.empty() || !extract_p256_scalar(key_der, priv))
-            return {};
+            return;
+        manifest_urn = "urn:c2pa:" + uuid_v4();
+        instance_id = "xmp:iid:" + uuid_v4();
+        gen_name = opts.generator_name;
+        gen_version = opts.generator_version;
+        Bytes actions_cbor = cbor::map({
+            {"actions", cbor::arr({cbor::map({
+                            {"action", cbor::tstr("c2pa.created")},
+                            {"softwareAgent", cbor::tstr(opts.software_agent)},
+                            {"digitalSourceType",
+                             cbor::tstr("http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia")},
+                        })})},
+        });
+        actions_box = jumb("cbor", "c2pa.actions.v2", {cbor_box(actions_cbor)});
+        actions_hash = assertion_hash(actions_box);
+        protected_hdr = cbor::map_raw({
+            {cbor::uint_(1), cbor::nint(-7)},
+            {cbor::uint_(33), cbor::arr({cbor::bstr(cert_der)})},
+        });
+        ok = true;
     }
 
-    const std::string manifest_urn = "urn:c2pa:" + uuid_v4();
-    const std::string instance_id = "xmp:iid:" + uuid_v4();
-    const std::array<uint8_t, 32> ZERO{};
-
-    // --- static assertion: actions ---
-    Bytes actions_cbor = cbor::map({
-        {"actions", cbor::arr({cbor::map({
-                        {"action", cbor::tstr("c2pa.created")},
-                        {"softwareAgent", cbor::tstr(opts.software_agent)},
-                        {"digitalSourceType",
-                         cbor::tstr("http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia")},
-                    })})},
-    });
-    Bytes actions_box = jumb("cbor", "c2pa.actions.v2", {cbor_box(actions_cbor)});
-    // c2pa hashed-URI: hash of the assertion box WITHOUT its 8-byte outer header.
-    auto assertion_hash = [](const Bytes& b) {
-        auto h = sha::sha256(b.data() + 8, b.size() - 8);
-        return Bytes(h.begin(), h.end());
-    };
-    Bytes actions_hash = assertion_hash(actions_box);
-
-    // --- COSE protected header: {1:-7 (ES256), 33:[certDer]} (int keys) ---
-    Bytes protected_hdr = cbor::map_raw({
-        {cbor::uint_(1), cbor::nint(-7)},
-        {cbor::uint_(33), cbor::arr({cbor::bstr(cert_der)})},
-    });
-
-    auto build_hashdata_cbor = [&](const std::array<uint8_t, 32>& file_hash, uint64_t excl_start, uint64_t excl_len) {
-        return cbor::map({
-            {"exclusions", cbor::arr({cbor::map({
-                               {"start", cbor::uint_(excl_start)},
-                               {"length", cbor::uint_(excl_len)},
-                           })})},
-            {"name", cbor::tstr("jumbf manifest")},
-            {"alg", cbor::tstr("sha256")},
-            {"hash", cbor::bstr(Bytes(file_hash.begin(), file_hash.end()))},
-            {"pad", cbor::bstr(Bytes(8, 0))},
-        });
-    };
-    auto build_claim = [&](const Bytes& hashdata_assn_hash) {
+    Bytes build_claim(const Bytes& hashdata_assn_hash) const {
         return cbor::map({
             {"instanceID", cbor::tstr(instance_id)},
             {"claim_generator_info", cbor::map({
-                                         {"name", cbor::tstr(opts.generator_name)},
-                                         {"version", cbor::tstr(opts.generator_version)},
+                                         {"name", cbor::tstr(gen_name)},
+                                         {"version", cbor::tstr(gen_version)},
                                      })},
             {"signature", cbor::tstr("self#jumbf=/c2pa/" + manifest_urn + "/c2pa.signature")},
             {"created_assertions", cbor::arr({cbor::map({
@@ -341,12 +337,9 @@ Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string&
                                     })})},
             {"alg", cbor::tstr("sha256")},
         });
-    };
+    }
 
-    struct Assembled {
-        Bytes store, hash_data_box, claim_bytes;
-    };
-    auto build_cose_box = [&](const Bytes& claim_bytes) -> Bytes {
+    Bytes build_cose_box(const Bytes& claim_bytes) const {
         Bytes sig_structure =
             cbor::arr({cbor::tstr("Signature1"), cbor::bstr(protected_hdr), cbor::bstr({}), cbor::bstr(claim_bytes)});
         uint8_t sig[64];
@@ -355,19 +348,47 @@ Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string&
         Bytes cose = cbor::tag(
             18, cbor::arr({cbor::bstr(protected_hdr), cbor::map({}), cbor::null_(), cbor::bstr(Bytes(sig, sig + 64))}));
         return jumb("c2cs", "c2pa.signature", {cbor_box(cose)});
-    };
-    auto assemble = [&](const std::array<uint8_t, 32>& file_hash, uint64_t excl_start, uint64_t excl_len,
-                        const Bytes& hashdata_assn_hash) -> Assembled {
-        Bytes hash_data_box =
-            jumb("cbor", "c2pa.hash.data", {cbor_box(build_hashdata_cbor(file_hash, excl_start, excl_len))});
+    }
+
+    // Build the JUMBF store binding to a data-hash exclusion [excl_start,excl_len).
+    Assembled assemble(const std::array<uint8_t, 32>& file_hash, uint64_t excl_start, uint64_t excl_len,
+                       const Bytes& hashdata_assn_hash) const {
+        Bytes hashdata_cbor = cbor::map({
+            {"exclusions", cbor::arr({cbor::map({
+                               {"start", cbor::uint_(excl_start)},
+                               {"length", cbor::uint_(excl_len)},
+                           })})},
+            {"name", cbor::tstr("jumbf manifest")},
+            {"alg", cbor::tstr("sha256")},
+            {"hash", cbor::bstr(Bytes(file_hash.begin(), file_hash.end()))},
+            {"pad", cbor::bstr(Bytes(8, 0))},
+        });
+        Bytes hash_data_box = jumb("cbor", "c2pa.hash.data", {cbor_box(hashdata_cbor)});
         Bytes assertions_box = jumb("c2as", "c2pa.assertions", {actions_box, hash_data_box});
         Bytes claim_bytes = build_claim(hashdata_assn_hash);
         Bytes claim_box = jumb("c2cl", "c2pa.claim.v2", {cbor_box(claim_bytes)});
         Bytes sig_box = build_cose_box(claim_bytes);
         Bytes manifest_box = jumb("c2ma", manifest_urn, {assertions_box, claim_box, sig_box});
         Bytes store = jumb("c2pa", "c2pa", {manifest_box});
-        return {std::move(store), std::move(hash_data_box), std::move(claim_bytes)};
-    };
+        return {std::move(store), std::move(hash_data_box)};
+    }
+};
+
+// Read a synchsafe 28-bit integer (ID3v2 sizes).
+inline uint32_t synchsafe(const uint8_t* p) { return (uint32_t(p[0]) << 21) | (p[1] << 14) | (p[2] << 7) | p[3]; }
+inline void put_synchsafe(Bytes& b, uint32_t n) {
+    put(b, {uint8_t((n >> 21) & 0x7f), uint8_t((n >> 14) & 0x7f), uint8_t((n >> 7) & 0x7f), uint8_t(n & 0x7f)});
+}
+
+}  // namespace
+
+Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
+    if (wav.size() < 12)
+        return {};
+    ManifestSigner ms(cert_pem, key_pem, opts);
+    if (!ms.ok)
+        return {};
+    const std::array<uint8_t, 32> ZERO{};
 
     const size_t chunk_start = wav.size(); // append at end
     const uint64_t excl_start = chunk_start;
@@ -375,13 +396,12 @@ Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string&
     // CBOR int width changes the store size, so iterate to a fixed point.
     uint64_t excl_len = 0;
     for (int i = 0; i < 6; i++) {
-        Bytes st = assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store;
+        Bytes st = ms.assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store;
         uint64_t n = 8 + st.size() + (st.size() & 1);
         if (n == excl_len)
             break;
         excl_len = n;
     }
-    // build file with the chunk region present, compute file hash excluding it
     auto with_chunk = [&](const Bytes& store) {
         Bytes out(wav.begin(), wav.begin() + chunk_start);
         put_str(out, "C2PA");
@@ -403,14 +423,110 @@ Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string&
         return sha::sha256(h);
     };
 
-    Bytes tmp = with_chunk(assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store);
+    Bytes tmp = with_chunk(ms.assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store);
     auto file_hash = file_hash_excluding(tmp);
-    Assembled a3 = assemble(file_hash, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end()));
-    Bytes hashdata_assn_hash = assertion_hash(a3.hash_data_box);
-    Assembled a4 = assemble(file_hash, excl_start, excl_len, hashdata_assn_hash);
+    auto a3 = ms.assemble(file_hash, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end()));
+    Bytes hashdata_assn_hash = ManifestSigner::assertion_hash(a3.hash_data_box);
+    auto a4 = ms.assemble(file_hash, excl_start, excl_len, hashdata_assn_hash);
     if (a4.store.empty())
         return {};
     return with_chunk(a4.store);
+}
+
+// Sign an MP3 by embedding the C2PA manifest store in an ID3v2.4 GEOB frame
+// (mime "application/c2pa", description "c2pa manifest store"). The hard-binding
+// data-hash exclusion covers exactly the GEOB object (the store bytes).
+Bytes sign_mp3(const Bytes& mp3, const std::string& cert_pem, const std::string& key_pem, const SignOptions& opts) {
+    if (mp3.size() < 4)
+        return {};
+    ManifestSigner ms(cert_pem, key_pem, opts);
+    if (!ms.ok)
+        return {};
+    const std::array<uint8_t, 32> ZERO{};
+
+    // Preserve any existing ID3v2 tag frames; the audio starts after them.
+    Bytes existing_frames;
+    size_t audio_start = 0;
+    if (mp3.size() >= 10 && std::memcmp(mp3.data(), "ID3", 3) == 0 && mp3[3] == 0x04) {
+        uint32_t tagsize = synchsafe(&mp3[6]);
+        size_t tag_end = 10 + tagsize;
+        if (tag_end <= mp3.size()) {
+            audio_start = tag_end;
+            // Walk frames, copying complete real frames until padding (a frame
+            // id beginning with 0x00). Blindly trimming trailing zeros would eat
+            // body bytes and misalign the tag.
+            size_t o = 10;
+            while (o + 10 <= tag_end) {
+                if (mp3[o] == 0) // padding
+                    break;
+                uint32_t fsz = synchsafe(&mp3[o + 4]);
+                size_t frame_total = 10 + fsz;
+                if (o + frame_total > tag_end)
+                    break;
+                existing_frames.insert(existing_frames.end(), mp3.begin() + o, mp3.begin() + o + frame_total);
+                o += frame_total;
+            }
+        }
+    }
+    const Bytes audio(mp3.begin() + audio_start, mp3.end());
+
+    // GEOB frame body prefix (before the object/store):
+    //   [enc=0x00]["application/c2pa"\0][""\0]["c2pa manifest store"\0]
+    Bytes geob_prefix;
+    geob_prefix.push_back(0x00);
+    put_str(geob_prefix, "application/c2pa");
+    geob_prefix.push_back(0);
+    geob_prefix.push_back(0); // empty filename
+    put_str(geob_prefix, "c2pa manifest store");
+    geob_prefix.push_back(0);
+
+    // The store's absolute file offset is fixed (independent of store size):
+    //   10 (ID3 hdr) + existing_frames + 10 (GEOB hdr) + geob_prefix
+    const uint64_t excl_start = 10 + existing_frames.size() + 10 + geob_prefix.size();
+
+    // excl_len == store size; iterate to a fixed point (CBOR width feedback).
+    uint64_t excl_len = 0;
+    for (int i = 0; i < 6; i++) {
+        Bytes st = ms.assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store;
+        if (st.size() == excl_len)
+            break;
+        excl_len = st.size();
+    }
+
+    auto assemble_file = [&](const Bytes& store) {
+        // GEOB frame = 10-byte header (id + synchsafe size + 2 flag bytes) + body
+        Bytes geob_body = geob_prefix;
+        put(geob_body, store);
+        Bytes geob;
+        put_str(geob, "GEOB");
+        put_synchsafe(geob, uint32_t(geob_body.size()));
+        put(geob, {0, 0}); // flags
+        put(geob, geob_body);
+        // ID3v2.4 tag = 10-byte header + existing frames + our GEOB frame
+        Bytes frames = existing_frames;
+        put(frames, geob);
+        Bytes out;
+        put_str(out, "ID3");
+        put(out, {0x04, 0x00, 0x00}); // v2.4.0, no flags
+        put_synchsafe(out, uint32_t(frames.size()));
+        put(out, frames);
+        put(out, audio);
+        return out;
+    };
+    auto file_hash_excluding = [&](const Bytes& full) {
+        Bytes h(full.begin(), full.begin() + excl_start);
+        h.insert(h.end(), full.begin() + excl_start + excl_len, full.end());
+        return sha::sha256(h);
+    };
+
+    Bytes tmp = assemble_file(ms.assemble(ZERO, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end())).store);
+    auto file_hash = file_hash_excluding(tmp);
+    auto a3 = ms.assemble(file_hash, excl_start, excl_len, Bytes(ZERO.begin(), ZERO.end()));
+    Bytes hashdata_assn_hash = ManifestSigner::assertion_hash(a3.hash_data_box);
+    auto a4 = ms.assemble(file_hash, excl_start, excl_len, hashdata_assn_hash);
+    if (a4.store.empty())
+        return {};
+    return assemble_file(a4.store);
 }
 
 // ============================================================================
@@ -606,31 +722,62 @@ VerifyResult verify_wav(const Bytes& wav) {
     VerifyResult res;
     auto& err = res.errors;
 
-    // locate C2PA RIFF chunk
+    // locate the C2PA manifest store — RIFF 'C2PA' chunk (WAV) or ID3v2 GEOB
+    // frame (MP3). The store bytes are copied into `store`.
     if (wav.size() < 12) {
         err.push_back("input too small");
         return res;
     }
-    size_t cstart = 0, csize = 0;
-    bool found = false;
-    for (size_t off = 12; off + 8 <= wav.size();) {
-        uint32_t sz = uint32_t(wav[off + 4]) | (uint32_t(wav[off + 5]) << 8) | (uint32_t(wav[off + 6]) << 16) |
-                      (uint32_t(wav[off + 7]) << 24);
-        if (std::memcmp(&wav[off], "C2PA", 4) == 0) {
-            cstart = off;
-            csize = sz;
-            found = true;
-            break;
+    Bytes store;
+    if (std::memcmp(wav.data(), "RIFF", 4) == 0) {
+        for (size_t off = 12; off + 8 <= wav.size();) {
+            uint32_t sz = uint32_t(wav[off + 4]) | (uint32_t(wav[off + 5]) << 8) | (uint32_t(wav[off + 6]) << 16) |
+                          (uint32_t(wav[off + 7]) << 24);
+            if (std::memcmp(&wav[off], "C2PA", 4) == 0) {
+                if (off + 8 + sz <= wav.size())
+                    store.assign(wav.begin() + off + 8, wav.begin() + off + 8 + sz);
+                break;
+            }
+            off += 8 + sz + (sz & 1);
         }
-        off += 8 + sz + (sz & 1);
+    } else if (wav.size() >= 10 && std::memcmp(wav.data(), "ID3", 3) == 0) {
+        uint32_t tagsize = synchsafe(&wav[6]);
+        size_t end = std::min(wav.size(), size_t(10) + tagsize);
+        for (size_t o = 10; o + 10 <= end;) {
+            if (wav[o] == 0)
+                break; // padding
+            uint32_t fsz = synchsafe(&wav[o + 4]);
+            if (o + 10 + fsz > end)
+                break;
+            if (std::memcmp(&wav[o], "GEOB", 4) == 0) {
+                const uint8_t* body = &wav[o + 10];
+                size_t p = 1; // skip text-encoding byte
+                size_t ms = p;
+                while (p < fsz && body[p] != 0)
+                    p++;
+                std::string mime(reinterpret_cast<const char*>(body + ms), p - ms);
+                p++; // nul
+                while (p < fsz && body[p] != 0)
+                    p++;
+                p++; // filename nul
+                while (p < fsz && body[p] != 0)
+                    p++;
+                p++; // description nul
+                if (mime == "application/c2pa" && p <= fsz) {
+                    store.assign(body + p, body + fsz);
+                    break;
+                }
+            }
+            o += 10 + fsz;
+        }
     }
-    if (!found) {
-        err.push_back("no C2PA chunk in RIFF");
+    if (store.empty()) {
+        err.push_back("no C2PA manifest store found");
         return res;
     }
 
     std::vector<std::pair<std::string, JumbfBox>> boxes;
-    jumbf_walk(&wav[cstart + 8], csize, boxes);
+    jumbf_walk(store.data(), store.size(), boxes);
     const JumbfBox *claimBox = find_box(boxes, "c2pa.claim.v2"), *sigBox = find_box(boxes, "c2pa.signature"),
                    *hashBox = find_box(boxes, "c2pa.hash.data"), *actBox = find_box(boxes, "c2pa.actions.v2");
     if (!claimBox || !sigBox || !hashBox || !actBox) {
@@ -719,10 +866,11 @@ VerifyResult verify_wav(const Bytes& wav) {
         }
     }
 
-    // hard binding: data hash over file minus the C2PA chunk exclusion
+    // hard binding: data hash over file minus the manifest-store exclusion (the
+    // manifest always carries the exclusion range; default to none if missing).
     Value hd = cbor_decode(hashBox->content, ok);
     const Value* excls = ok ? hd.get("exclusions") : nullptr;
-    uint64_t exStart = cstart, exLen = 8 + csize + (csize & 1);
+    uint64_t exStart = 0, exLen = 0;
     if (excls && excls->type == Value::ARRAY && !excls->arr.empty()) {
         const Value* s = excls->arr[0].get("start");
         const Value* l = excls->arr[0].get("length");

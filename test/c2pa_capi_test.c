@@ -63,7 +63,7 @@ int main(void) {
     unsigned char* wav = make_wav(&wav_len);
     unsigned char* signed_ = NULL;
     size_t signed_len = 0;
-    int rc = c2pa_audio_sign_wav(wav, wav_len, NULL, NULL, &signed_, &signed_len);
+    int rc = c2pa_audio_sign(wav, wav_len, "audio/wav", NULL, NULL, &signed_, &signed_len);
     if (rc != 0 || signed_len <= wav_len) {
         printf("FAIL: sign rc=%d len=%zu\n", rc, signed_len);
         failures++;
@@ -72,7 +72,7 @@ int main(void) {
     }
 
     /* verify the round-trip */
-    int flags = c2pa_audio_verify_wav(signed_, signed_len);
+    int flags = c2pa_audio_verify(signed_, signed_len);
     if (flags != (C2PA_AUDIO_SIG_VALID | C2PA_AUDIO_DATA_VALID | C2PA_AUDIO_ASSERT_VALID | C2PA_AUDIO_VALID)) {
         printf("FAIL: round-trip verify flags=0x%x\n", flags);
         failures++;
@@ -82,7 +82,7 @@ int main(void) {
 
     /* tamper the audio -> data hash must fail */
     signed_[46] ^= 0xff;
-    flags = c2pa_audio_verify_wav(signed_, signed_len);
+    flags = c2pa_audio_verify(signed_, signed_len);
     if (flags & C2PA_AUDIO_VALID) {
         printf("FAIL: tamper not detected (flags=0x%x)\n", flags);
         failures++;
@@ -91,24 +91,40 @@ int main(void) {
     }
     signed_[46] ^= 0xff;
 
-    /* verify a c2pa-rs reference vector (their signer -> our verifier) */
 #ifdef C2PA_AUDIO_TEST_ASSETS
     {
         char path[1024];
-        snprintf(path, sizeof(path), "%s/reference-c2pa-rs.wav", C2PA_AUDIO_TEST_ASSETS);
-        size_t rlen = 0;
-        unsigned char* ref = read_file(path, &rlen);
-        if (!ref) {
-            printf("warn: reference vector missing (%s)\n", path);
-        } else {
-            flags = c2pa_audio_verify_wav(ref, rlen);
-            if (!(flags & C2PA_AUDIO_VALID)) {
-                printf("FAIL: c2pa-rs reference vector did not validate (0x%x)\n", flags);
-                failures++;
-            } else {
-                printf("ok: c2pa-rs reference vector VALID (0x%x)\n", flags);
-            }
+        size_t rlen;
+
+        /* verify c2pa-rs reference vectors (their signer -> our verifier) */
+        const char* refs[2];
+        refs[0] = "reference-c2pa-rs.wav";
+        refs[1] = "reference-c2pa-rs.mp3";
+        for (int i = 0; i < 2; i++) {
+            snprintf(path, sizeof(path), "%s/%s", C2PA_AUDIO_TEST_ASSETS, refs[i]);
+            unsigned char* ref = read_file(path, &rlen);
+            if (!ref) { printf("warn: reference vector missing (%s)\n", path); continue; }
+            flags = c2pa_audio_verify(ref, rlen);
+            if (!(flags & C2PA_AUDIO_VALID)) { printf("FAIL: %s did not validate (0x%x)\n", refs[i], flags); failures++; }
+            else { printf("ok: %s VALID (0x%x)\n", refs[i], flags); }
             free(ref);
+        }
+
+        /* MP3 round-trip: sign an unsigned sample.mp3, then verify */
+        snprintf(path, sizeof(path), "%s/sample.mp3", C2PA_AUDIO_TEST_ASSETS);
+        unsigned char* mp3 = read_file(path, &rlen);
+        if (mp3) {
+            unsigned char* smp3 = NULL;
+            size_t slen = 0;
+            int mrc = c2pa_audio_sign(mp3, rlen, "audio/mpeg", NULL, NULL, &smp3, &slen);
+            if (mrc != 0 || slen <= rlen) { printf("FAIL: MP3 sign rc=%d\n", mrc); failures++; }
+            else {
+                int mf = c2pa_audio_verify(smp3, slen);
+                if (mf != 0xF) { printf("FAIL: MP3 round-trip verify 0x%x\n", mf); failures++; }
+                else { printf("ok: MP3 round-trip VALID (%zu -> %zu)\n", rlen, slen); }
+                c2pa_audio_free(smp3);
+            }
+            free(mp3);
         }
     }
 #endif

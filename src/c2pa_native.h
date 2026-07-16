@@ -34,6 +34,11 @@ struct SignOptions {
 Bytes sign_wav(const Bytes& wav, const std::string& cert_pem, const std::string& key_pem,
                const SignOptions& opts = SignOptions());
 
+// Sign an MP3 by embedding the manifest in an ID3v2.4 GEOB frame. Same manifest
+// as WAV; only the container differs. Returns the signed MP3 or empty on failure.
+Bytes sign_mp3(const Bytes& mp3, const std::string& cert_pem, const std::string& key_pem,
+               const SignOptions& opts = SignOptions());
+
 // Result of verifying a signed WAV's C2PA manifest.
 struct VerifyResult {
     bool valid = false;            // signature + data hash + assertions all OK
