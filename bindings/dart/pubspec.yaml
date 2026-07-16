@@ -2,7 +2,7 @@ name: c2pa_audio
 description: >-
   Dart FFI bindings to sign and verify C2PA (Content Credentials) in WAV and MP3
   audio — ES256/CBOR/JUMBF/COSE, no c2pa-rs. Interoperable with c2pa-rs.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/CrispStrobe/c2pa-audio/tree/main/bindings/dart
 homepage: https://github.com/CrispStrobe/c2pa-audio
 environment:

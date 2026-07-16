@@ -1,8 +1,8 @@
 # c2pa_audio
 
 Dart FFI bindings for [c2pa-audio](https://github.com/CrispStrobe/c2pa-audio) —
-native **C2PA (Content Credentials)** signing and verification for **WAV** and
-**MP3** audio. ES256 / CBOR / JUMBF / COSE, **no c2pa-rs**, interoperable with
+native **C2PA (Content Credentials)** signing and verification for **WAV**,
+**MP3**, and **M4A/MP4** audio. ES256 / CBOR / JUMBF / COSE, **no c2pa-rs**, interoperable with
 the c2pa-rs reference implementation in both directions.
 
 ## Native library
@@ -30,7 +30,7 @@ void main() {
 
   final Uint8List wav = /* your WAV bytes */ Uint8List(0);
   final signed = c2pa.signWav(wav);           // bundled self-signed default cert
-  // or: c2pa.signMp3(mp3), or c2pa.sign(bytes, mime: 'audio/mpeg')
+  // or: c2pa.signMp3(mp3) / c2pa.signM4a(m4a) / c2pa.sign(bytes, mime: 'audio/mp4')
 
   final r = c2pa.verify(signed);               // auto-detects WAV/MP3
   print('valid: ${r.valid}');                  // signature + hash bindings OK
@@ -41,9 +41,8 @@ Pass your own `certPem` / `keyPem` to `sign*` for a custom signer identity.
 
 ## Scope
 
-WAV + MP3, sign + verify. Trust-anchor evaluation is out of scope (a self-signed
-cert verifies cryptographically but is "untrusted" to a full validator). MP4/M4A,
-AAC and Opus are not supported here.
+WAV, MP3, and M4A/MP4, sign + verify. Trust-anchor evaluation is out of scope (a self-signed
+cert verifies cryptographically but is "untrusted" to a full validator). AAC/Opus are supported when muxed into MP4.
 
 Independent project — not affiliated with the C2PA / Content Authenticity
 Initiative. MIT licensed.

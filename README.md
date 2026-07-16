@@ -95,12 +95,18 @@ final r = c2pa.verify(signed);               // r.valid == true
 
 **WAV** (RIFF `C2PA` chunk), **MP3** (ID3v2.4 GEOB frame), and **M4A/MP4**
 (ISO BMFF `uuid` box + `c2pa.hash.bmff.v3`), sign + verify — all fully
-interoperable with c2pa-rs. Trust-anchor evaluation is out of scope
-(a self-signed cert verifies cryptographically but is "untrusted" to a full
-validator). AAC (ADTS) and Opus (Ogg) have no C2PA embedding path in the spec.
+interoperable with c2pa-rs. Trust-anchor evaluation is out of scope (a
+self-signed cert verifies cryptographically but is "untrusted" to a full
+validator).
 
-Signing API takes a MIME type: `"audio/wav"`, `"audio/mpeg"`, or `"audio/mp4"`. Verification
-auto-detects the container.
+The BMFF path is **codec-agnostic**, so **AAC-in-MP4 and Opus-in-MP4** work out
+of the box (pass `audio/mp4`). Only the *raw streaming* containers — ADTS AAC
+(`.aac`) and Ogg Opus (`.opus`/`.ogg`) — have no C2PA embedding path; neither
+does c2pa-rs (it refuses `audio/aac` / `audio/ogg`). Remux those into MP4 to
+sign them.
+
+Signing API takes a MIME type: `"audio/wav"`, `"audio/mpeg"`, or `"audio/mp4"`.
+Verification auto-detects the container (RIFF / ID3 / ISO-BMFF).
 
 ## Licensing
 
