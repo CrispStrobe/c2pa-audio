@@ -1,0 +1,10 @@
+{
+  "name": "@crispstrobe/c2pa",
+  "version": "0.1.0",
+  "description": "Native C2PA signing & verification for WAV in pure WebCrypto (no c2pa-rs)",
+  "type": "module",
+  "exports": { "./sign": "./c2pa.mjs", "./verify": "./c2pa-verify.mjs", ".": "./c2pa.mjs" },
+  "scripts": { "test": "node --test *.test.mjs" },
+  "license": "MIT",
+  "repository": "github:CrispStrobe/crispasr-c2pa"
+}
