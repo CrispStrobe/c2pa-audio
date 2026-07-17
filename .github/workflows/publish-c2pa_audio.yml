@@ -1,0 +1,27 @@
+name: Publish c2pa_audio to pub.dev
+
+# Automated publishing via pub.dev's GitHub Actions OIDC (no stored secrets).
+# Requires enabling it once at:
+#   https://pub.dev/packages/c2pa_audio/admin -> Automated publishing
+#   Repository: CrispStrobe/c2pa-audio
+#   Tag pattern: c2pa_audio-v{{version}}   (must match the trigger below)
+#
+# The Dart package lives in bindings/dart of this multi-language monorepo, so
+# the tag is package-scoped — a future Rust/Python release tag will not trigger
+# a Dart publish.
+#
+# Release flow: bump bindings/dart/pubspec.yaml version, then
+#   git tag c2pa_audio-v<version> && git push origin c2pa_audio-v<version>
+
+on:
+  push:
+    tags:
+      - 'c2pa_audio-v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish:
+    permissions:
+      id-token: write # OIDC auth to pub.dev (no stored secrets)
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: bindings/dart
