@@ -1,3 +1,8 @@
+## 0.2.1
+
+- Docs: README now lists FLAC alongside WAV/MP3/M4A (FLAC sign+verify shipped in
+  0.2.0); corrected the `verify` auto-detect comment to WAV/MP3/M4A/FLAC. No code change.
+
 ## 0.2.0
 
 - M4A/MP4 (ISO BMFF, c2pa.hash.bmff.v3) and FLAC (ID3v2 GEOB) sign + verify, interoperable with c2pa-rs.
