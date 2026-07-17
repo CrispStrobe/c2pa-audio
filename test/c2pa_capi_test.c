@@ -180,6 +180,35 @@ int main(void) {
             (void)c2pa_audio_verify(w2, 20 + bs); /* must not crash / read OOB */
         }
         printf("ok: runt JUMBF boxes handled (no OOB read)\n");
+
+        /* a CBOR bstr/tstr claiming a near-UINT64_MAX length must be rejected,
+         * not wrapped past the bounds check (found by the fuzz job). Patch each
+         * 'cbor' box payload in a genuinely signed file in turn — the header
+         * 0x5b + 8x0xFF asks for a 2^64-1 byte string. */
+        {
+            unsigned char* h = (unsigned char*)malloc(signed_len);
+            int patched = 0;
+            for (size_t i = 0; i + 13 < signed_len; i++) {
+                if (memcmp(signed_ + i, "cbor", 4) != 0)
+                    continue;
+                memcpy(h, signed_, signed_len);
+                h[i + 4] = 0x5b; /* major 2 (bstr), 8-byte length follows */
+                memset(h + i + 5, 0xff, 8);
+                int f = c2pa_audio_verify(h, signed_len); /* must not abort */
+                if (f & C2PA_AUDIO_VALID) {
+                    printf("FAIL: hostile CBOR length verified as valid (0x%x)\n", f);
+                    failures++;
+                }
+                patched++;
+            }
+            if (!patched) {
+                printf("FAIL: no 'cbor' box found to patch\n");
+                failures++;
+            } else {
+                printf("ok: hostile CBOR lengths rejected (%d boxes, no abort)\n", patched);
+            }
+            free(h);
+        }
     }
 
     c2pa_audio_free(signed_);

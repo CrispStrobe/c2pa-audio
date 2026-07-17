@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -26,7 +27,17 @@ static uint32_t rnd() {
     return uint32_t(st >> 33);
 }
 
+// The mutation stream is deterministic, so the iteration index is all you need
+// to replay a fault: report it before dying rather than leaving a bare abort.
+static long g_iter = -1;
+static void report_iter() {
+    std::fprintf(stderr, "\n*** fault at iteration %ld (replay: rerun with the same argv) ***\n", g_iter);
+    std::fflush(stderr);
+    std::abort();
+}
+
 int main(int argc, char** argv) {
+    std::set_terminate(report_iter);
     long iters = argc > 1 ? std::atol(argv[1]) : 100000;
     std::vector<Bytes> seeds;
     for (int i = 2; i < argc; i++) {
@@ -52,6 +63,11 @@ int main(int argc, char** argv) {
     }
 
     for (long it = 0; it < iters; it++) {
+        g_iter = it;
+        if (it && it % 1000000 == 0) { // a heartbeat, so a timed-out run shows its reach
+            std::fprintf(stderr, "iter %ld\n", it);
+            std::fflush(stderr);
+        }
         Bytes b = seeds[rnd() % seeds.size()];
         int muts = 1 + rnd() % 8;
         for (int m = 0; m < muts && !b.empty(); m++) {

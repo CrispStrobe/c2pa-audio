@@ -764,11 +764,17 @@ struct CborReader {
     const uint8_t* p;
     size_t n, pos = 0;
     bool ok = true;
+    // `len` is attacker-controlled and up to UINT64_MAX (ai==27), so `pos + len`
+    // can wrap and slip past a naive `pos + len > n` bound. Subtract instead —
+    // pos <= n always holds, so n - pos cannot underflow.
+    bool avail(uint64_t need) const {
+        return need <= uint64_t(n - pos);
+    }
     uint64_t readLen(uint8_t ai) {
         if (ai < 24)
             return ai;
         int nb = ai == 24 ? 1 : ai == 25 ? 2 : ai == 26 ? 4 : ai == 27 ? 8 : 0;
-        if (!nb || pos + nb > n) {
+        if (!nb || !avail(uint64_t(nb))) {
             ok = false;
             return 0;
         }
@@ -798,7 +804,7 @@ struct CborReader {
             out.i = -1 - int64_t(len);
             break;
         case 2:
-            if (pos + len > n) {
+            if (!avail(len)) {
                 ok = false;
                 break;
             }
@@ -807,7 +813,7 @@ struct CborReader {
             pos += len;
             break;
         case 3:
-            if (pos + len > n) {
+            if (!avail(len)) {
                 ok = false;
                 break;
             }
@@ -815,12 +821,22 @@ struct CborReader {
             out.str.assign(reinterpret_cast<const char*>(p + pos), len);
             pos += len;
             break;
+        // every array item / map pair costs at least one byte, so a count
+        // exceeding the bytes left is malformed — reject before growing.
         case 4:
+            if (!avail(len)) {
+                ok = false;
+                break;
+            }
             out.type = Value::ARRAY;
             for (uint64_t k = 0; k < len && ok; k++)
                 out.arr.push_back(value(depth + 1));
             break;
         case 5:
+            if (!avail(len)) {
+                ok = false;
+                break;
+            }
             out.type = Value::MAP;
             for (uint64_t k = 0; k < len && ok; k++) {
                 Value key = value(depth + 1);
