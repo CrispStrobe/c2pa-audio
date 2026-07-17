@@ -12,7 +12,7 @@ jobs:
   native:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure + build
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
       - name: C ABI tests
@@ -23,8 +23,8 @@ jobs:
   js:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: '20' }
       - name: JS tests
         working-directory: js
@@ -34,7 +34,7 @@ jobs:
   bindings:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build shared lib
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
       - name: Set lib path
@@ -58,7 +58,7 @@ jobs:
   parity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - name: Install c2pa reference reader
