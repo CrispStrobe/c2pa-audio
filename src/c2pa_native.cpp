@@ -1138,13 +1138,18 @@ VerifyResult verify_wav(const Bytes& wav) {
         if (excls && excls->type == Value::ARRAY && !excls->arr.empty()) {
             const Value* s = excls->arr[0].get("start");
             const Value* l = excls->arr[0].get("length");
-            if (s)
+            // start/length are attacker-controlled CBOR ints; a negative (NINT)
+            // or huge value would make the iterator arithmetic below allocate a
+            // vector past max_size() (std::length_error). Reject anything not a
+            // plausible in-file offset.
+            if (s && s->i >= 0)
                 exStart = uint64_t(s->i);
-            if (l)
+            if (l && l->i >= 0)
                 exLen = uint64_t(l->i);
         }
         const Value* storedHash = ok ? hd.get("hash") : nullptr;
-        if (storedHash && exStart + exLen <= wav.size()) {
+        // subtractive bound so exStart + exLen cannot wrap past wav.size()
+        if (storedHash && exStart <= wav.size() && exLen <= wav.size() - exStart) {
             Bytes concat(wav.begin(), wav.begin() + exStart);
             concat.insert(concat.end(), wav.begin() + exStart + exLen, wav.end());
             auto fh = sha::sha256(concat);
@@ -1191,9 +1196,17 @@ VerifyResult verify_wav(const Bytes& wav) {
                                 const Value* valv = d.get("value");
                                 if (!offv || !valv)
                                     continue;
+                                // offset is attacker-controlled: guard against a
+                                // negative/huge value wrapping `o + offset` and
+                                // against the compare below overflowing, so the
+                                // memcmp stays inside this box.
+                                if (offv->i < 0 || uint64_t(offv->i) > bs ||
+                                    valv->bytes.size() > bs - uint64_t(offv->i)) {
+                                    matches = false;
+                                    break;
+                                }
                                 size_t doff = o + size_t(offv->i);
-                                if (doff + valv->bytes.size() > o + bs ||
-                                    std::memcmp(&wav[doff], valv->bytes.data(), valv->bytes.size()) != 0) {
+                                if (std::memcmp(&wav[doff], valv->bytes.data(), valv->bytes.size()) != 0) {
                                     matches = false;
                                     break;
                                 }

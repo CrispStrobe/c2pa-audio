@@ -31,7 +31,17 @@ static uint32_t rnd() {
 // to replay a fault: report it before dying rather than leaving a bare abort.
 static long g_iter = -1;
 static void report_iter() {
-    std::fprintf(stderr, "\n*** fault at iteration %ld (replay: rerun with the same argv) ***\n", g_iter);
+    const char* what = "(not a C++ exception)";
+    if (auto e = std::current_exception()) {
+        try {
+            std::rethrow_exception(e);
+        } catch (const std::exception& ex) {
+            what = ex.what();
+        } catch (...) {
+            what = "(non-std exception)";
+        }
+    }
+    std::fprintf(stderr, "\n*** fault at iteration %ld: %s (replay: rerun with the same argv) ***\n", g_iter, what);
     std::fflush(stderr);
     std::abort();
 }
