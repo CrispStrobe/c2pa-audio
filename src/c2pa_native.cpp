@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <random>
 
@@ -795,13 +796,16 @@ struct CborReader {
         if (!ok)
             return out;
         switch (major) {
+        // `len` can be up to UINT64_MAX; store it in the int64 `i` without
+        // signed overflow (UB). Callers only use `i` as an offset/length and
+        // reject out-of-range values, so saturating an oversized int is safe.
         case 0:
             out.type = Value::UINT;
-            out.i = int64_t(len);
+            out.i = len > uint64_t(INT64_MAX) ? INT64_MAX : int64_t(len);
             break;
         case 1:
             out.type = Value::NINT;
-            out.i = -1 - int64_t(len);
+            out.i = len >= uint64_t(INT64_MAX) ? INT64_MIN : -1 - int64_t(len);
             break;
         case 2:
             if (!avail(len)) {
@@ -1205,6 +1209,11 @@ VerifyResult verify_wav(const Bytes& wav) {
                                     matches = false;
                                     break;
                                 }
+                                // an empty value matches anything — and calling
+                                // memcmp with a null (empty vector) pointer, even
+                                // for length 0, is UB (its args are nonnull).
+                                if (valv->bytes.empty())
+                                    continue;
                                 size_t doff = o + size_t(offv->i);
                                 if (std::memcmp(&wav[doff], valv->bytes.data(), valv->bytes.size()) != 0) {
                                     matches = false;
