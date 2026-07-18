@@ -24,4 +24,5 @@ jobs:
       id-token: write # OIDC auth to pub.dev (no stored secrets)
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
     with:
+      environment: pub.dev
       working-directory: bindings/dart
